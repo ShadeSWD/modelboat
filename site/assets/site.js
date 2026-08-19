@@ -19,8 +19,9 @@
       { h: '', k: 'index', t: 'Обзор' },
       { h: 'designer', k: 'designer', t: 'Конструктор' },
       { h: 'parts', k: 'parts', t: 'Компоненты' },
-      { t: 'Постройка', h: 'build', act: p => ['build', 'seal', 'trials'].includes(p), drop: [
+      { t: 'Постройка', h: 'build', act: p => ['build', 'fittings', 'seal', 'trials'].includes(p), drop: [
         { h: 'build', k: 'build', t: 'Печать и сборка' },
+        { h: 'fittings', k: 'fittings', t: 'Крепления и оснастка' },
         { h: 'seal', k: 'seal', t: 'Герметизация и покрытие' },
         { h: 'trials', k: 'trials', t: 'Испытания' },
       ] },

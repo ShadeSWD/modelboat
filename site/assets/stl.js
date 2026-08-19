@@ -10,83 +10,81 @@
 'use strict';
 
 /* контур станции (правый борт, от киля до палубы) → полный U-контур
- * от палубы правого борта через киль к палубе левого борта, мм */
-function fullContour(st, scale) {
-  const right = st.pts.map(p => [p.y * scale, p.z * scale]);
-  const left = st.pts.map(p => [-p.y * scale, p.z * scale]).reverse();
-  return right.slice().reverse().concat(left); // палуба ПрБ → киль → палуба ЛБ
+ * от палубы правого борта через киль к палубе левого борта, мм.
+ * wStem — минимальная полуширота: контур нигде не схлопывается в линию
+ * (в носу получается стем конечной ширины, у киля — узкий плоский след),
+ * поэтому топология сетки везде одинакова и оболочка гарантированно
+ * замкнута без вырожденных треугольников. */
+function fullContour(st, scale, wStem) {
+  const w = wStem || 0;
+  const right = st.pts.map(p => [Math.max(p.y * scale, w), p.z * scale]);
+  const left = right.map(p => [-p[0], p[1]]);
+  // палуба ПрБ → вниз к килю (+y) → через дно → киль (−y) → вверх к палубе ЛБ:
+  // непрерывная U-образная ломаная (раньше вторая ветвь шла в обратную
+  // сторону — между килем и палубой возникала фантомная мембрана)
+  return right.slice().reverse().concat(left);
 }
 
 /* смещение U-контура внутрь на w (мм): нормали усредняются по соседним
- * сегментам; y прижимается к нулю, дно поднимается */
+ * сегментам, затем санация — внутренняя точка обязана остаться строго
+ * внутри наружной (иначе при остром киле смещение самопересекается) */
 function offsetContour(c, w) {
   const n = c.length, out = [];
   for (let i = 0; i < n; i++) {
     const a = c[Math.max(0, i - 1)], b = c[i], d = c[Math.min(n - 1, i + 1)];
     let tx = d[0] - a[0], ty = d[1] - a[1];
     const len = Math.hypot(tx, ty) || 1;
-    // нормаль к контуру, направленная внутрь корпуса (контур идёт ПрБ→ЛБ)
-    let nx = -ty / len, ny = tx / len;
+    // нормаль внутрь корпуса: обход ПрБ-вниз → дно → ЛБ-вверх
+    let nx = ty / len, ny = -tx / len;
     let y = b[0] + nx * w, z = b[1] + ny * w;
-    // не пересекать ДП: правая половина остаётся правой, левая — левой
-    if (b[0] > 1e-6 && y < 0) y = 0;
-    if (b[0] < -1e-6 && y > 0) y = 0;
-    out.push([y, z]);
+    const side = Math.sign(b[0]);
+    const yAbs = Math.abs(b[0]);
+    let yi = side * y > 0 ? Math.abs(y) : 0.001;      // не пересекать ДП
+    yi = Math.min(yi, Math.max(0.001, yAbs - 0.4));   // строго внутри борта
+    yi = Math.max(yi, Math.min(0.3, yAbs * 0.25));    // и не в нуле
+    z = Math.max(z, b[1] - 0.0001);                   // дно только поднимается
+    out.push([side >= 0 ? yi : -yi, z]);
   }
   return out;
 }
 
-/* треугольники ленты между двумя контурами одинаковой длины */
-function stitch(tris, c0, x0, c1, x1, flip) {
-  for (let i = 0; i < c0.length - 1; i++) {
-    const A = [x0, c0[i][0], c0[i][1]], B = [x0, c0[i + 1][0], c0[i + 1][1]];
-    const C = [x1, c1[i][0], c1[i][1]], D = [x1, c1[i + 1][0], c1[i + 1][1]];
-    if (!flip) { tris.push([A, C, B], [B, C, D]); }
-    else { tris.push([A, B, C], [B, D, C]); }
-  }
-}
-
-/* корпус → массив треугольников [[x,y,z]×3] в мм */
+/* корпус → массив треугольников [[x,y,z]×3] в мм.
+ * Пять лент: наружная поверхность, внутренняя, транец, форштевень,
+ * планширь (обе кромки палубы). Развороты обхода подобраны так, что
+ * ориентация согласована по всей сетке (проверка: каждое направленное
+ * ребро встречается ровно один раз, объём положительный и равен
+ * площадь × стенка). */
 function hullMesh(hull, wallM) {
   const scale = 1000, w = wallM * 1000;
+  const wStem = w + 0.8; // минимальная полуширота наружного контура (стем)
   const S = hull.stations;
-  const outer = S.map(st => fullContour(st, scale));
-  const inner = S.map((st, i) => {
-    const bmax = Math.max(...st.pts.map(p => p.y)) * scale;
-    if (bmax < 2.5 * w) { // нос/оконечность: монолит, контур в ДП
-      return outer[i].map(([y, z]) => [0, Math.min(z + w, outer[i][0][1])]);
-    }
-    return offsetContour(outer[i], w);
-  });
+  const outer = S.map(st => fullContour(st, scale, wStem));
+  const inner = outer.map(c => offsetContour(c, w));
+  const N = S.length, M = outer[0].length, X = i => S[i].x * scale;
   const tris = [];
-  for (let i = 0; i < S.length - 1; i++) {
-    const x0 = S[i].x * scale, x1 = S[i + 1].x * scale;
-    stitch(tris, outer[i], x0, outer[i + 1], x1, false);   // наружная
-    stitch(tris, inner[i], x0, inner[i + 1], x1, true);    // внутренняя (нормали внутрь)
-  }
-  // транец (станция 0) и форштевень (последняя): кольцо наружный↔внутренний
-  const ring = (o, inn, x, flip) => {
-    for (let i = 0; i < o.length - 1; i++) {
-      const A = [x, o[i][0], o[i][1]], B = [x, o[i + 1][0], o[i + 1][1]];
-      const C = [x, inn[i][0], inn[i][1]], D = [x, inn[i + 1][0], inn[i + 1][1]];
-      if (!flip) { tris.push([A, B, C], [B, D, C]); }
-      else { tris.push([A, C, B], [B, C, D]); }
-    }
+  const quad = (P1, P2, P3, P4, flip) => {
+    if (flip) tris.push([P1, P3, P2], [P1, P4, P3]);
+    else tris.push([P1, P2, P3], [P1, P3, P4]);
   };
-  ring(outer[0], inner[0], S[0].x * scale, false);
-  ring(outer[S.length - 1], inner[S.length - 1], S[S.length - 1].x * scale, true);
-  // планширь: две ленты по кромке палубы (первая и последняя точки контуров)
-  for (let i = 0; i < S.length - 1; i++) {
-    const x0 = S[i].x * scale, x1 = S[i + 1].x * scale;
-    for (const k of [0, outer[i].length - 1]) {
-      const A = [x0, outer[i][k][0], outer[i][k][1]], B = [x1, outer[i + 1][k][0], outer[i + 1][k][1]];
-      const C = [x0, inner[i][k][0], inner[i][k][1]], D = [x1, inner[i + 1][k][0], inner[i + 1][k][1]];
-      (k === 0) ? tris.push([A, B, C], [B, D, C]) : tris.push([A, C, B], [B, C, D]);
-    }
+  for (let i = 0; i < N - 1; i++) for (let k = 0; k < M - 1; k++) {
+    quad([X(i), ...outer[i][k]], [X(i), ...outer[i][k + 1]],
+      [X(i + 1), ...outer[i + 1][k + 1]], [X(i + 1), ...outer[i + 1][k]], true);
+    quad([X(i), ...inner[i][k]], [X(i), ...inner[i][k + 1]],
+      [X(i + 1), ...inner[i + 1][k + 1]], [X(i + 1), ...inner[i + 1][k]], false);
   }
-  // выше обход получился «нормалями внутрь» (проверено интегралом объёма) —
-  // разворачиваем все треугольники наружу
-  return tris.map(t => [t[0], t[2], t[1]]);
+  for (let k = 0; k < M - 1; k++) { // транец и форштевень
+    quad([X(0), ...outer[0][k]], [X(0), ...outer[0][k + 1]],
+      [X(0), ...inner[0][k + 1]], [X(0), ...inner[0][k]], false);
+    quad([X(N - 1), ...outer[N - 1][k]], [X(N - 1), ...outer[N - 1][k + 1]],
+      [X(N - 1), ...inner[N - 1][k + 1]], [X(N - 1), ...inner[N - 1][k]], true);
+  }
+  for (let i = 0; i < N - 1; i++) { // планширь
+    quad([X(i), ...outer[i][0]], [X(i + 1), ...outer[i + 1][0]],
+      [X(i + 1), ...inner[i + 1][0]], [X(i), ...inner[i][0]], true);
+    quad([X(i), ...outer[i][M - 1]], [X(i + 1), ...outer[i + 1][M - 1]],
+      [X(i + 1), ...inner[i + 1][M - 1]], [X(i), ...inner[i][M - 1]], false);
+  }
+  return tris;
 }
 
 /* бинарный STL из треугольников */

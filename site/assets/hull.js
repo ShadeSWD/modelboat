@@ -81,25 +81,50 @@ const PROTOS = {
 };
 
 /* ---------- построение корпуса ----------
- * makeHull(protoId, dims, morph) → hull
+ * makeHull(protoId, dims, morph, res) → hull
  * dims: {L, B, D} в метрах; morph: {full: 0.7..1.4 (γ полноты),
- * transom: 0.5..1.4 (ширина кормы), bow: 0.7..1.3 (острота носа)}.
- * hull.stations[i] = {x, pts:[{y,z}...NZC от киля до палубы]} — наружная
- * поверхность правого борта. */
-function makeHull(protoId, dims, morph) {
+ * transom: 0.5..1.4 (ширина кормы), bow: 0.7..1.3 (острота носа)};
+ * res: {nst, nzc} — разрешение (для экспорта STL сетка строится гуще,
+ * чем для гидростатики). hull.stations[i] = {x, pts:[{y,z}… от киля до
+ * палубы]} — наружная поверхность правого борта. */
+function makeHull(protoId, dims, morph, res) {
   const p = PROTOS[protoId];
   const { L, B, D } = dims;
   const m = Object.assign({ full: 1, transom: 1, bow: 1 }, morph);
+  const nst = (res && res.nst) || NST, nzc = (res && res.nzc) || NZC;
+  // для табличных прототипов — сплайновая переинтерполяция таблицы:
+  // сначала вдоль ватерлиний на каждой табличной станции, затем вдоль
+  // корпуса на каждом уровне; убирает «гранёность» билинейной сетки
+  let tabF = null;
+  if (p.table) {
+    const tb = protoTables()[p.table];
+    const zSamples = 33;
+    const perZ = []; // perZ[k] — сплайн полушироты по станциям на уровне k
+    for (let k = 0; k < zSamples; k++) {
+      const zf = k / (zSamples - 1) * 1.5; // z/T от 0 до 1.5 (верх таблицы)
+      const knots = tb.stations.map((su, si) => {
+        const colKnots = tb.wl.map((w, wi) => [w, tb.hb[si][wi]]);
+        return [su, Math.max(0, curve(colKnots)(zf))];
+      });
+      perZ.push(curve(knots));
+    }
+    tabF = (u, zf) => {
+      const t = clamp01(zf / 1.5) * (zSamples - 1);
+      const k = Math.min(zSamples - 2, Math.floor(t));
+      const f = t - k;
+      return Math.max(0, perZ[k](u) * (1 - f) + perZ[k + 1](u) * f);
+    };
+  }
   const stations = [];
-  for (let i = 0; i < NST; i++) {
-    const u = i / (NST - 1);
+  for (let i = 0; i < nst; i++) {
+    const u = i / (nst - 1);
     const x = u * L;
     const pts = [];
     if (p.analytic) { // корпус Вигли: y = B/2·(1−ξ²)·(1−((T−z)/T)²) при z ≤ T
       const T = p.Tfrac * D, xi = 2 * u - 1;
       const yw = B / 2 * Math.max(0, 1 - xi * xi);
-      for (let k = 0; k < NZC; k++) {
-        const z = k / (NZC - 1) * D;
+      for (let k = 0; k < nzc; k++) {
+        const z = k / (nzc - 1) * D;
         pts.push({ y: z <= T ? yw * (1 - Math.pow((T - z) / T, 2)) : yw, z });
       }
       stations.push({ x, pts });
@@ -108,41 +133,29 @@ function makeHull(protoId, dims, morph) {
     // морфинг: транец усиливает/ослабляет ширину кормы, нос — приполнение носа
     const wAft = (u < 0.5) ? 1 + (m.transom - 1) * (1 - u / 0.5) : 1;
     const wBow = (u > 0.5) ? 1 + (m.bow - 1) * ((u - 0.5) / 0.5) : 1;
-    if (p.table) { // табличный прототип: интерполяция таблицы ординат
-      const tb = protoTables()[p.table];
-      const Tt = p.Tfrac * D; // конструктивная осадка: таблица доходит до 1,5T = палуба
-      const yn = zf => { // нормированная полуширота на этой станции на уровне z/Tt
-        // по станциям
-        const su = tb.stations;
-        let a = 0;
-        while (a < su.length - 2 && su[a + 1] < u) a++;
-        const tu = clamp01((u - su[a]) / (su[a + 1] - su[a]));
-        // по ватерлиниям
-        const wl = tb.wl;
-        let b = 0;
-        const zz = clamp01(zf) * 1.5;
-        while (b < wl.length - 2 && wl[b + 1] < zz) b++;
-        const tw = clamp01((zz - wl[b]) / (wl[b + 1] - wl[b]));
-        const at = tb.hb[a][b] + tw * (tb.hb[a][b + 1] - tb.hb[a][b]);
-        const bt = tb.hb[a + 1][b] + tw * (tb.hb[a + 1][b + 1] - tb.hb[a + 1][b]);
-        return at + tu * (bt - at);
-      };
-      // полный столбец значений и отсечка «пустого» низа (подзор, подъём днища)
-      const raw = [];
-      for (let k = 0; k < NZC; k++) {
-        const z = k / (NZC - 1) * D;
-        let v = Math.min(1.06, Math.max(0, yn(z / D)));
+    if (p.table) { // табличный прототип: сплайн по таблице ординат
+      const Tt = p.Tfrac * D; // конструктивная осадка (таблица до 1,5T = палуба)
+      const yOf = z => {
+        let v = Math.min(1.06, tabF(u, z / Tt));
         v = Math.pow(v / 1.06, 1 / m.full) * 1.06;           // полнота
         v *= (u < 0.5 ? wAft : wBow);                        // корма/нос
-        raw.push({ z, y: v * B / 2 });
+        return v * B / 2;
+      };
+      // линия киля: ниже неё корпуса нет (подзор кормы, подъём днища);
+      // контур переопрашивается равномерно от киля до палубы — без
+      // дублирующихся точек, сетка остаётся регулярной
+      let zk = 0;
+      const NF = 150;
+      for (let k = 0; k < NF; k++) {
+        const z = k / NF * D;
+        if (yOf(z) > 0.004 * B) { zk = Math.max(0, (k - 1) / NF * D); break; }
       }
-      let k0 = raw.findIndex(q => q.y > 0.004 * B);
-      if (k0 < 0) k0 = raw.length - 1;
-      if (k0 > 0) k0--;
-      raw[k0] = { z: raw[k0].z, y: 0 };                      // точка киля/контура
-      const col = raw.slice(k0);
-      while (col.length < NZC) col.unshift({ z: col[0].z, y: 0 });
-      stations.push({ x, pts: col.map(q => ({ y: q.y, z: q.z })) });
+      pts.push({ y: 0, z: zk });
+      for (let k = 1; k < nzc; k++) {
+        const z = zk + k / (nzc - 1) * (D - zk);
+        pts.push({ y: Math.max(0, yOf(z)), z: Math.min(z, D) });
+      }
+      stations.push({ x, pts });
       continue;
     }
     const bd = B / 2 * Math.min(1, p.fd(u) * wAft * wBow);
@@ -153,8 +166,8 @@ function makeHull(protoId, dims, morph) {
     // p=1 — треугольное V, p=2 — четверть эллипса, p→∞ — прямоугольное U;
     // множитель полноты morph.full > 1 делает сечения полнее
     const pexp = Math.max(0.6, p.n(u) * m.full);
-    for (let k = 0; k < NZC; k++) {
-      const z = zkeel + k / (NZC - 1) * (D - zkeel);
+    for (let k = 0; k < nzc; k++) {
+      const z = zkeel + k / (nzc - 1) * (D - zkeel);
       let y;
       if (z <= Tf) {
         const t = (Tf - zkeel) < 1e-9 ? 1 : (z - zkeel) / (Tf - zkeel);

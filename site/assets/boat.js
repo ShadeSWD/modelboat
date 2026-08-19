@@ -97,7 +97,7 @@ function compute() {
   // масса корпуса
   const kPrint = 1.07; // периметры, неидеальность заполнения
   const mShell = sp.A * wall * rhoP * kPrint;
-  const mFrames = 0.10 * mShell;                 // флоры, кницы, фундаменты
+  const mFrames = 0.06 * mShell;                 // флоры и кницы (фундаменты — отдельными деталями)
   const mDeck = sp.Adeck * wall * rhoP;
   const mLacq = (2 * sp.A + sp.Adeck) * 0.10;    // лак ≈100 г/м² на слой·стороны
   const hullMass = mShell + mFrames + mDeck;
@@ -137,8 +137,9 @@ function compute() {
   const stB = hull.stations[Math.round(state.ballastFx * (hull.stations.length - 1))];
   const zBall = stB.pts[0].z + wall + 0.004;
 
-  // суммарная нагрузка и центр тяжести
-  const rows = [
+  // нагрузка без креплений — первый проход равновесия (нужна осадка,
+  // чтобы поставить винт и перо; крепления добавятся вторым проходом)
+  const rows0 = [
     { name: 'Оболочка корпуса', m: mShell, x: sp.x, z: sp.z },
     { name: 'Набор (флоры, кницы)', m: mFrames, x: sp.x, z: sp.z * 0.6 },
     { name: 'Палуба и люк', m: mDeck, x: sp.xdeck, z: D },
@@ -146,22 +147,17 @@ function compute() {
     ...comps.map(c => ({ name: c.name, m: c.mass, x: c.x, z: c.z })),
     { name: 'Балласт', m: mBall, x: xBall, z: zBall },
   ];
-  const M = rows.reduce((s, r) => s + r.m, 0);
-  const xg = rows.reduce((s, r) => s + r.m * r.x, 0) / M;
-  const zg = rows.reduce((s, r) => s + r.m * r.z, 0) / M;
+  const M0 = rows0.reduce((s, r) => s + r.m, 0);
+  const eq0 = equilibrium(hull, M0,
+    rows0.reduce((s, r) => s + r.m * r.x, 0) / M0,
+    rows0.reduce((s, r) => s + r.m * r.z, 0) / M0);
 
-  const eq = equilibrium(hull, M, xg, zg);
-  let speed = null, gz = null;
-  if (eq.floats) {
-    const dr = DRIVE[kit];
-    speed = speedPredict(hull, eq, { D: dr.D, pitch: dr.pitch, rpm: dr.rpm, count: dr.count });
-    gz = gzCurve(hull, M, zg, 60);
-  }
-  // линия вала и перо руля
+  // линия вала и перо руля (по осадке первого прохода)
   const twin = PROTOS[state.proto].shafts === 2;
   const dr = DRIVE[kit];
   const motor = comps.find(c => c.id === 'motor_130' || c.id === 'motor_n20');
-  const xProp = 0.03 * L, zProp = eq.floats ? Math.max(wall + 0.004, eq.T - dr.D / 2 - 0.004) : 0.01;
+  const xProp = 0.03 * L;
+  const zProp = eq0.floats ? Math.max(wall + 0.004, eq0.T - dr.D / 2 - 0.004) : 0.01;
   const shaftLine = [];
   const nSh = twin ? 2 : 1;
   for (let i = 0; i < nSh; i++) {
@@ -172,15 +168,105 @@ function compute() {
     });
   }
   const rudder = PROTOS[state.proto].rudder
-    ? { x: 0.012 * L, chord: Math.round(0.06 * L * 1000), span: Math.round((eq.floats ? eq.T : D / 2) * 0.9 * 1000), thick: 3 }
+    ? { x: 0.012 * L, chord: Math.round(0.06 * L * 1000), span: Math.round((eq0.floats ? eq0.T : D / 2) * 0.9 * 1000), thick: 3 }
     : null;
+
+  // крепления и оснастка (fittings.js): печатные детали под этот корпус
+  let fits = [];
+  if (typeof buildFittings === 'function') {
+    fits = buildFittings({
+      kit, parts: db.parts, hullStations: hull.stations, L, B, D, wall,
+      ballast: state.ballast, ballastFx: state.ballastFx, comps,
+      shaftAngleDeg: Math.atan2(shaftLine[0].z2 - shaftLine[0].z1,
+        shaftLine[0].x2 - shaftLine[0].x1) * 180 / Math.PI,
+      rudder: rudder ? { x: rudder.x * 1000, chord: rudder.chord, span: rudder.span, thick: rudder.thick } : null,
+      shaftMM: shaftLine.map(s => ({
+        x1: s.x1 * 1000, z1: s.z1 * 1000, x2: s.x2 * 1000, z2: s.z2 * 1000, y: s.y * 1000,
+      })),
+    });
+  }
+  const fitsAboard = fits.filter(f => f.place); // стапель остаётся на берегу
+  const mFits = fitsAboard.reduce((s, f) => s + f.mass, 0) / 1000;
+
+  // окончательная нагрузка — с креплениями
+  const rows = rows0.concat(fitsAboard.map(f => ({
+    name: f.name, m: f.mass / 1000, x: f.place.x / 1000, z: (f.place.z + f.dims[2] / 2) / 1000,
+    fit: true,
+  })));
+  const M = rows.reduce((s, r) => s + r.m, 0);
+  const xg = rows.reduce((s, r) => s + r.m * r.x, 0) / M;
+  const zg = rows.reduce((s, r) => s + r.m * r.z, 0) / M;
+
+  const eq = equilibrium(hull, M, xg, zg);
+  let speed = null, gz = null;
+  if (eq.floats) {
+    speed = speedPredict(hull, eq, { D: dr.D, pitch: dr.pitch, rpm: dr.rpm, count: dr.count });
+    gz = gzCurve(hull, M, zg, 60);
+  }
 
   return {
     hull, L, B, D, wall, sp, kit, comps, rows, M, xg, zg, eq, speed, gz,
-    mShell, mFrames, mDeck, mLacq, hullMass, mComps, mBall, xBall, zBall,
-    shaftLine, rudder, xProp, zProp, rhoP, kPrint,
+    mShell, mFrames, mDeck, mLacq, hullMass, mComps, mBall, xBall, zBall, mFits,
+    fits, fitsAboard, shaftLine, rudder, xProp, zProp, rhoP, kPrint,
+    morph: { full: state.full, transom: state.transom, bow: state.bow },
     Vfull: hullVolume(hull),
   };
+}
+
+/* ---------- сборка для 3D-вида и экспорта ----------
+ * Возвращает группы деталей {name, color, tris (мм)}: корпус, крепления
+ * на местах, компоненты-болванки, валы, гребные винты, балласт. */
+function assemblyParts(r, opts) {
+  const cut = opts && opts.cut;
+  const res = { nst: 121, nzc: 57 };
+  const hullHi = makeHull(state.proto, { L: r.L, B: r.B, D: r.D }, r.morph, res);
+  let hullTris = hullMesh(hullHi, r.wall);
+  if (cut) hullTris = hullTris.filter(t =>
+    (t[0][1] + t[1][1] + t[2][1]) / 3 < 1.5);   // разрез: остаётся левый борт
+  const parts = [{ name: 'Корпус', color: [0.62, 0.72, 0.78], tris: hullTris }];
+  const colorOf = c => {
+    if (/^(nano|esp32c3|hm10|hc05|mx1508|tp4056|buck)/.test(c.id)) return [0.19, 0.31, 0.63];
+    if (/^motor/.test(c.id)) return [0.70, 0.22, 0.18];
+    if (/servo/.test(c.id)) return [0.85, 0.45, 0.15];
+    if (/batt|holder/.test(c.id)) return [0.72, 0.55, 0.15];
+    return [0.45, 0.45, 0.48];
+  };
+  for (const c of r.comps) {
+    const cx = c.x * 1000, cy = c.y * 1000, cz = c.z * 1000;
+    let tris;
+    if (c.shape === 'cyl') {
+      tris = fMove(fRotY(fRing(0, 0, -c.Lmm / 2, c.Wmm / 2, 0, c.Lmm, 20), 90), cx, cy, cz);
+    } else {
+      tris = fBox(cx, cy, cz, c.Lmm, c.Wmm, c.Hmm);
+    }
+    parts.push({ name: c.name, color: colorOf(c), tris });
+  }
+  for (const f of r.fitsAboard) {
+    parts.push({
+      name: f.name, color: [0.09, 0.45, 0.38],
+      tris: fMove(f.tris, f.place.x, f.place.y || 0, f.place.z),
+    });
+  }
+  // валы (дейдвудные трубки Ø5) и гребные винты — диск по диаметру
+  const dr = DRIVE[r.kit];
+  for (const s of r.shaftLine) {
+    const dx = (s.x2 - s.x1) * 1000, dz = (s.z2 - s.z1) * 1000;
+    const len = Math.hypot(dx, dz);
+    const ang = Math.atan2(dx, dz) * 180 / Math.PI; // от оси Z к оси X
+    const tube = fMove(fRotY(fRing(0, 0, 0, 2.5, 0, len, 14), ang),
+      s.x1 * 1000, s.y * 1000, s.z1 * 1000);
+    parts.push({ name: 'Дейдвуд с валом', color: [0.5, 0.45, 0.25], tris: tube });
+    const disk = fMove(fRotY(fRing(0, 0, -1.5, dr.D * 500, 0, 3, 24), 90),
+      (s.x1 - 0.004) * 1000, s.y * 1000, s.z1 * 1000);
+    parts.push({ name: 'Гребной винт', color: [0.75, 0.6, 0.2], tris: disk });
+  }
+  // балласт
+  parts.push({
+    name: 'Балласт', color: [0.25, 0.25, 0.28],
+    tris: fBox(r.xBall * 1000, 0, r.zBall * 1000 + 5,
+      Math.max(20, r.mBall * 1e6 / 6 / 300), 18, 10),
+  });
+  return parts;
 }
 
 /* ---------- проверки ---------- */
@@ -362,7 +448,8 @@ function renderSteps(r) {
   let s = '';
   s += `<details open><summary><b>1. Масса корпуса</b></summary>` +
     stepRow('m<sub>об</sub> = A·t·ρ·k', `${f(r.sp.A * 1e4, 0)} см² · ${f(r.wall * 1000, 1)} мм · ${r.rhoP / 1000} г/см³ · ${r.kPrint}`, fmt(r.mShell * 1000, 0) + ' г') +
-    stepRow('m<sub>наб</sub> = 0,10·m<sub>об</sub>', '', fmt(r.mFrames * 1000, 0) + ' г') +
+    stepRow('m<sub>наб</sub> = 0,06·m<sub>об</sub> (флоры, кницы)', '', fmt(r.mFrames * 1000, 0) + ' г') +
+    stepRow('Крепления и фундаменты (' + r.fitsAboard.length + ' печатных дет.)', '', fmt(r.mFits * 1000, 0) + ' г') +
     stepRow('m<sub>пал</sub> = A<sub>пал</sub>·t·ρ', `${f(r.sp.Adeck * 1e4, 0)} см² · ${f(r.wall * 1000, 1)} мм`, fmt(r.mDeck * 1000, 0) + ' г') +
     stepRow('m<sub>лак</sub> ≈ 100 г/м² · (2A + A<sub>пал</sub>)', '', fmt(r.mLacq * 1000, 0) + ' г') +
     stepRow('Компоненты (' + r.comps.length + ' поз.)', '', fmt(r.mComps * 1000, 0) + ' г') +
@@ -451,8 +538,18 @@ function refresh() {
     r.comps.filter(c => { if (seen.has(c.id)) return false; seen.add(c.id); return true; })
       .map(c => `<tr><td>${c.tag || ''}</td><td>${c.name}${c.twin ? ' ×2' : ''}</td><td>${fmt(c.mass * 1000 * (c.twin ? 2 : 1), 0)}</td><td>${fmt(c.x * 1000, 0)}</td></tr>`).join('') +
     `<tr><td>Б</td><td>Балласт (свинец/гайки в киль)</td><td>${fmt(r.mBall * 1000, 0)}</td><td>${fmt(r.xBall * 1000, 0)}</td></tr></table>`;
+  // крепления и оснастка
+  if ($('fitlist')) {
+    $('fitlist').innerHTML = '<table><tr><th>Деталь</th><th>Габарит, мм</th><th>Масса, г</th><th>Где стоит</th></tr>' +
+      r.fits.map(f => `<tr><td>${f.name}</td><td>${f.dims.map(d => d.toFixed(0)).join('×')}</td>` +
+        `<td>${fmt(f.mass, 1)}</td><td>${f.place ? 'x = ' + fmt(f.place.x, 0) + ' мм' : 'на берегу (в массу не входит)'}</td></tr>`).join('') +
+      `</table><p class="note">Печатных деталей ${r.fits.length}, на борту ${fmt(r.mFits * 1000, 0)} г —
+       уже учтены в нагрузке масс. Подробно про каждую — на странице
+       <a href="fittings">«Крепления и оснастка»</a>.</p>`;
+  }
   $('steps').innerHTML = renderSteps(r);
   attachDrag(side);
+  schedule3d();
   const info = PROTOS[state.proto];
   $('protoAbout').textContent = info.about + ' Набор электроники: «' + (partsDb().kits[r.kit] || {}).title + '».';
   try { localStorage.setItem('modelboat-state', JSON.stringify(state)); } catch (e) { }
@@ -487,14 +584,46 @@ function attachDrag(side) {
   svg.addEventListener('pointerup', () => { target = null; });
 }
 
+/* ---------- 3D-вид ---------- */
+let viewer = null, t3d = null;
+function schedule3d() {
+  if (!$('view3d')) return;
+  clearTimeout(t3d);
+  t3d = setTimeout(update3d, 450);
+}
+function update3d() {
+  const cv = $('view3d');
+  if (!cv || typeof viewer3d !== 'function') return;
+  if (!viewer) { viewer = viewer3d(cv); window._v3d = viewer; }
+  if (!viewer) return;
+  const r = cur || compute();
+  viewer.setParts(assemblyParts(r, { cut: $('cut3d') && $('cut3d').checked }));
+}
+
 /* ---------- экспорт ---------- */
 function doExport(kind) {
   const r = cur || compute();
   const nm = 'boat-' + state.proto + '-' + state.L;
-  if (kind === 'stl') download(stlBlob(hullMesh(r.hull, r.wall)), nm + '.stl');
+  if (kind === 'stl') { // корпус в высоком разрешении (гладкий, водонепроницаемый)
+    const hi = makeHull(state.proto, { L: r.L, B: r.B, D: r.D }, r.morph, { nst: 121, nzc: 57 });
+    download(stlBlob(hullMesh(hi, r.wall)), nm + '.stl');
+  }
+  if (kind === 'fit') download(stlBlob(fittingsMesh(r.fits)), nm + '-крепления.stl');
+  if (kind === 'asm') {
+    const all = [];
+    for (const p of assemblyParts(r, {})) all.push(...p.tris);
+    download(stlBlob(all), nm + '-сборка.stl');
+  }
   if (kind === 'json') {
     const spec = boatJson({ name: nm, kit: r.kit, T: r.eq.floats ? r.eq.T : 0, wall: r.wall },
       r.hull, r.comps, r.shaftLine, r.rudder);
+    // крепления — в сборку КОМПАС болванками по габаритам
+    spec.components = spec.components.concat(r.fitsAboard.map(f => ({
+      id: f.id, name: f.name, x: +f.place.x.toFixed(1), y: +(f.place.y || 0).toFixed(1),
+      z: +(f.place.z + f.dims[2] / 2).toFixed(1),
+      L: +f.dims[0].toFixed(1), W: +f.dims[1].toFixed(1), H: +f.dims[2].toFixed(1),
+      shape: 'box',
+    })));
     download(new Blob([JSON.stringify(spec, null, 1)], { type: 'application/json' }), 'boat.json');
   }
   if (kind === 'csv') download(offsetsCsv(r.hull), nm + '-ординаты.csv');
@@ -519,6 +648,11 @@ window.addEventListener('DOMContentLoaded', () => {
   $('mat').value = state.mat;
   $('mat').addEventListener('change', () => { state.mat = $('mat').value; refresh(); });
   $('reset').addEventListener('click', () => { state.pos = {}; refresh(); });
-  for (const k of ['stl', 'json', 'csv']) $('exp_' + k).addEventListener('click', () => doExport(k));
+  for (const k of ['stl', 'fit', 'asm', 'json', 'csv'])
+    if ($('exp_' + k)) $('exp_' + k).addEventListener('click', () => doExport(k));
+  if ($('cut3d')) $('cut3d').addEventListener('change', update3d);
+  const views = { v34: [2.7, -0.7, 1.5], vside: [3.14, -1.35, 1.7], vtop: [3.14, -0.12, 1.6] };
+  for (const id in views)
+    if ($(id)) $(id).addEventListener('click', () => { if (viewer) viewer.setView(...views[id]); });
   refresh();
 });

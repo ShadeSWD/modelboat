@@ -77,21 +77,42 @@
   <h3>Ведомость компоновки</h3>
   <div id="legend"></div>
 
+  <h2>Трёхмерная сборка</h2>
+  <p>Вся модель целиком: корпус, крепления на местах, платы, моторы,
+  батарея, валы и винты. Вращение — перетаскиванием, масштаб — колесом
+  или щипком, двойной щелчок — сброс.
+  <label style="font:14px system-ui;margin-left:10px"><input type="checkbox" id="cut3d" checked>
+  разрез по диаметральной плоскости</label>
+  <span class="btns" style="margin-left:10px">
+    <button id="v34" style="font:13px system-ui;padding:4px 10px">¾</button>
+    <button id="vside" style="font:13px system-ui;padding:4px 10px">Сбоку</button>
+    <button id="vtop" style="font:13px system-ui;padding:4px 10px">Сверху</button>
+  </span></p>
+  <canvas id="view3d" style="width:100%;height:460px;border:1px solid var(--line);border-radius:10px;background:#fff;display:block"></canvas>
+
+  <h3>Крепления и оснастка</h3>
+  <div id="fitlist"></div>
+
   <h2>Решение по шагам</h2>
   <div id="steps"></div>
 
   <h2>Экспорт</h2>
   <div class="btns">
-    <button id="exp_stl">Скачать STL корпуса (на печать)</button>
-    <button id="exp_json">Скачать boat.json (для КОМПАС-3D)</button>
+    <button id="exp_stl">STL корпуса (на печать)</button>
+    <button id="exp_fit">STL креплений (на печать)</button>
+    <button id="exp_asm">STL сборки (посмотреть целиком)</button>
+    <button id="exp_json">boat.json (для КОМПАС-3D)</button>
     <button id="exp_csv">Таблица ординат (CSV)</button>
   </div>
-  <p class="note">STL — полая оболочка с выбранной толщиной стенки и открытой
-  палубой, миллиметры, килем вниз: в слайсере поверните корму на стол или
-  разрежьте на секции (<a href="build">как печатать</a>). boat.json — исходник
-  для <a href="kompas">макроса КОМПАС-3D</a>: нативный лофт корпуса и сборка с
-  болванками компонентов. Таблица ординат — для проверки построений
-  и теоретического чертежа вручную.</p>
+  <p class="note">STL корпуса — гладкая полая оболочка высокого разрешения
+  с выбранной толщиной стенки и открытой палубой (проверена на замкнутость:
+  каждое ребро принадлежит ровно двум граням); в слайсере поверните корму на
+  стол или разрежьте на секции (<a href="build">как печатать</a>). STL
+  креплений — все печатные детали оснастки, разложенные в ряд на столе;
+  составные детали набраны из нескольких сплошных тел — слайсер объединяет
+  их сам. STL сборки — вся модель с компонентами для просмотра (печатать её
+  не нужно). boat.json — исходник для <a href="kompas">макроса КОМПАС-3D</a>:
+  нативный лофт корпуса и сборка с болванками компонентов и креплений.</p>
 
   <h2>Какой прототип выбрать</h2>
   <p>Все три корпуса «проходят по нормам»: плавают, остойчивы, печатаются.
@@ -116,6 +137,8 @@
 <script src="assets/protodata.js"></script>
 <script src="assets/hull.js"></script>
 <script src="assets/stl.js"></script>
+<script src="assets/fittings.js"></script>
+<script src="assets/viewer.js"></script>
 <script src="assets/parts.js"></script>
 <script src="assets/boat.js"></script>
 <script src="/relmet-choice.js" defer></script>
