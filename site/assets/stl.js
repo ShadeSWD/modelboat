@@ -60,29 +60,48 @@ function hullMesh(hull, wallM) {
   const S = hull.stations;
   const outer = S.map(st => fullContour(st, scale, wStem));
   const inner = outer.map(c => offsetContour(c, w));
-  const N = S.length, M = outer[0].length, X = i => S[i].x * scale;
+  const N = S.length, M = outer[0].length;
+  // транец и форштевень — СТЕНКИ толщиной w: наружная крышка в торце,
+  // внутренняя поверхность начинается с отступом w и закрыта своей крышкой
+  const X = i => Math.min(Math.max(S[i].x * scale, w), S[N - 1].x * scale - w);
+  const Xo = i => S[i].x * scale;
   const tris = [];
   const quad = (P1, P2, P3, P4, flip) => {
     if (flip) tris.push([P1, P3, P2], [P1, P4, P3]);
     else tris.push([P1, P2, P3], [P1, P3, P4]);
   };
   for (let i = 0; i < N - 1; i++) for (let k = 0; k < M - 1; k++) {
-    quad([X(i), ...outer[i][k]], [X(i), ...outer[i][k + 1]],
-      [X(i + 1), ...outer[i + 1][k + 1]], [X(i + 1), ...outer[i + 1][k]], true);
+    quad([Xo(i), ...outer[i][k]], [Xo(i), ...outer[i][k + 1]],
+      [Xo(i + 1), ...outer[i + 1][k + 1]], [Xo(i + 1), ...outer[i + 1][k]], true);
     quad([X(i), ...inner[i][k]], [X(i), ...inner[i][k + 1]],
       [X(i + 1), ...inner[i + 1][k + 1]], [X(i + 1), ...inner[i + 1][k]], false);
   }
-  for (let k = 0; k < M - 1; k++) { // транец и форштевень
-    quad([X(0), ...outer[0][k]], [X(0), ...outer[0][k + 1]],
-      [X(0), ...inner[0][k + 1]], [X(0), ...inner[0][k]], false);
-    quad([X(N - 1), ...outer[N - 1][k]], [X(N - 1), ...outer[N - 1][k + 1]],
-      [X(N - 1), ...inner[N - 1][k + 1]], [X(N - 1), ...inner[N - 1][k]], true);
-  }
+  // торцевые крышки: полигон U-контура, замкнутый по палубе, веером от ДП
+  const cap = (c, x, flip) => {
+    const mid = [x, 0, c[0][1]]; // точка на линии палубы в ДП
+    for (let k = 0; k < c.length - 1; k++) {
+      const A = [x, ...c[k]], B = [x, ...c[k + 1]];
+      if (flip) tris.push([mid, B, A]); else tris.push([mid, A, B]);
+    }
+  };
+  cap(outer[0], Xo(0), false);            // наружная грань транца
+  cap(inner[0], X(0), true);              // внутренняя грань транца
+  cap(outer[N - 1], Xo(N - 1), true);     // наружная грань форштевня
+  cap(inner[N - 1], X(N - 1), false);     // внутренняя грань форштевня
   for (let i = 0; i < N - 1; i++) { // планширь
-    quad([X(i), ...outer[i][0]], [X(i + 1), ...outer[i + 1][0]],
+    quad([Xo(i), ...outer[i][0]], [Xo(i + 1), ...outer[i + 1][0]],
       [X(i + 1), ...inner[i + 1][0]], [X(i), ...inner[i][0]], true);
-    quad([X(i), ...outer[i][M - 1]], [X(i + 1), ...outer[i + 1][M - 1]],
+    quad([Xo(i), ...outer[i][M - 1]], [Xo(i + 1), ...outer[i + 1][M - 1]],
       [X(i + 1), ...inner[i + 1][M - 1]], [X(i), ...inner[i][M - 1]], false);
+  }
+  // торцевые полоски планширя: между наружной и внутренней кромками палубы
+  for (const [io, flip] of [[0, false], [N - 1, true]]) {
+    for (const k of [0, M - 1]) {
+      const A = [Xo(io), ...outer[io][k]], B2 = [X(io), ...inner[io][k]];
+      const Am = [Xo(io), 0, outer[io][0][1]], Bm = [X(io), 0, inner[io][0][1]];
+      const f2 = (k === 0) !== flip;
+      if (f2) tris.push([A, Bm, B2], [A, Am, Bm]); else tris.push([A, B2, Bm], [A, Bm, Am]);
+    }
   }
   return tris;
 }
