@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Источники — модель судна для 3D-печати</title>
+<meta name="description" content="Учебники и первоисточники: теория корабля, систематические серии обводов, сопротивление ИТТК, гребные винты, практика судомоделизма.">
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+<script src="assets/shell.js"></script>
+<script src="assets/site.js" data-root="./" data-page="sources"></script>
+<main class="wrap">
+  <h1>Источники</h1>
+  <p class="lead">Методы расчёта — из классической теории корабля;
+  обводы прототипов — из опубликованных систематических серий;
+  практика постройки — из опыта судомоделизма.</p>
+
+  <h2>Теория корабля</h2>
+  <ul>
+    <li>Войткунский Я. И. (ред.). Справочник по теории корабля. В 3 т. — Л.: Судостроение, 1985.</li>
+    <li>Семёнов-Тян-Шанский В. В. Статика и динамика корабля. — Л.: Судостроение, 1973.</li>
+    <li>Курсы этого кластера: <a href="/shipstat/">Статика корабля</a>,
+      <a href="/design/">Проектирование судов</a>, <a href="/mzg/">Механика жидкости и газа</a>,
+      <a href="/ref/">Инженерный справочник</a>.</li>
+  </ul>
+
+  <h2>Обводы и систематические серии</h2>
+  <ul>
+    <li>Todd F. H. Series 60 — Methodical Experiments with Models of Single-Screw Merchant Ships. DTMB Report 1712, 1963 (таблицы ординат серии с C<sub>B</sub> = 0,60–0,80).</li>
+    <li>Kim Y.-H., Kim S.-H., Lucas T. Advanced Panel Method for Ship Wave Inviscid Flow Theory (SWIFT). DTRC-89/029, 1989 (таблица ординат R/V Athena, модель DTMB 5365 — прототип двухвального катера).</li>
+    <li>Bailey D. The NPL High Speed Round Bilge Displacement Hull Series. RINA Maritime Technology Monograph № 4, 1976 (круглоскулые быстроходные катера; в открытом доступе — только коэффициенты серии, по отчёту Fung, NAVSEA 1986).</li>
+    <li>Wigley W. C. S. A Comparison of Experiment and Calculated Wave-Profiles… Trans. RINA, 1934 (аналитический корпус для валидации).</li>
+    <li>Сводка найденных данных по прототипам — в репозитории сайта, каталог research/.</li>
+  </ul>
+
+  <h2>Сопротивление и движители</h2>
+  <ul>
+    <li>ITTC-57: формула корреляционной линии трения (8-я МКОБ, Мадрид, 1957).</li>
+    <li>Kuiper G. The Wageningen Propeller Series. MARIN, 1992 (кривые действия K<sub>T</sub>, K<sub>Q</sub>).</li>
+    <li>Басин А. М., Миниович И. Я. Теория и расчёт гребных винтов. — Л.: Судпромгиз, 1963.</li>
+  </ul>
+
+  <h2>Судомоделизм и постройка</h2>
+  <ul>
+    <li>Целовальников А. С. Справочник судомоделиста. — М.: ДОСААФ, 1978–1983 (3 части: корпус, двигатели, аппаратура).</li>
+    <li>Курти О. Постройка моделей судов. — Л.: Судостроение, 1977.</li>
+    <li>Документация Arduino (arduino.cc), ядра esp32 (docs.espressif.com) и спецификация Web Bluetooth (webbluetoothcg.github.io).</li>
+  </ul>
+
+  <h2>Инструменты сайта</h2>
+  <ul>
+    <li>Расчётное ядро — собственное (hull.js: численная гидростатика, наклонения, ИТТК-57), валидировано на корпусе Вигли; исходники открыты в репозитории.</li>
+    <li>Макрос КОМПАС-3D — по документации API7 (сайт СКБ АСКОН, kompas.ru).</li>
+  </ul>
+</main>
+</body>
+</html>

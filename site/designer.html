@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Конструктор модели судна — обводы, расчёт, компоновка, экспорт</title>
+<meta name="description" content="Живой конструктор радиоуправляемой модели судна для 3D-печати: выбор обводов, честная гидростатика, компоновка компонентов, остойчивость, прогноз скорости, экспорт STL и данных для КОМПАС-3D.">
+<link rel="stylesheet" href="assets/style.css">
+<style>
+  .cells { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px; margin: 12px 0; }
+  .cellbox { background: var(--paper); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; box-shadow: var(--shadow); }
+  .cellbox .k { font: 12px system-ui; color: var(--muted); }
+  .cellbox .v { font: 700 17px system-ui; }
+  .ctrl { background: var(--paper); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; box-shadow: var(--shadow); margin: 10px 0; }
+  .ctrl label { display: flex; align-items: center; gap: 8px; margin: 6px 0; font: 14px system-ui; flex-wrap: wrap; }
+  .ctrl input[type=range] { flex: 1; min-width: 130px; }
+  .ctrl .grp { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 4px 22px; }
+  .btns button { font: 15px system-ui; padding: 8px 14px; margin: 4px 6px 4px 0; border: 1px solid var(--accent); background: var(--paper); color: var(--accent); border-radius: 8px; cursor: pointer; }
+  .btns button:hover { background: var(--accent); color: #fff; }
+  #steps details { background: var(--paper); border: 1px solid var(--line); border-radius: 8px; padding: 8px 12px; margin: 8px 0; }
+  #legend table td, #legend table th { border: 1px solid var(--line); padding: 4px 8px; font: 14px system-ui; }
+</style>
+</head>
+<body>
+<script src="assets/shell.js"></script>
+<script src="assets/site.js" data-root="./" data-page="designer"></script>
+<main class="wrap">
+  <h1>Конструктор модели</h1>
+  <p class="lead">Выберите обводы и главные размерения — всё остальное считается
+  сразу: масса напечатанного корпуса, компоненты по местам, осадка,
+  метацентрическая высота, дифферент, диаграмма остойчивости и прогноз
+  скорости. Когда все проверки зелёные — выгружайте STL на печать и
+  boat.json для КОМПАС-3D.</p>
+
+  <div class="ctrl">
+    <label>Обводы прототипа
+      <select id="proto">
+        <option value="tug">Буксир — одновальный, с рулём</option>
+        <option value="launch">Катер R/V Athena — двухвальный, без руля</option>
+        <option value="cargo">Транспорт Серии 60 — одновальный, с рулём</option>
+      </select>
+      <select id="mat">
+        <option value="pla">PLA (1,24 г/см³)</option>
+        <option value="petg">PETG (1,27 г/см³)</option>
+      </select>
+    </label>
+    <p class="note" id="protoAbout" style="margin:4px 0 10px"></p>
+    <div class="grp">
+      <label>Длина L, мм <input type="range" id="L" min="300" max="650" step="10"><b id="L_v"></b></label>
+      <label>Удлинение L/B <input type="range" id="LB" min="4" max="7" step="0.1"><b id="LB_v"></b></label>
+      <label>Высота борта D/B <input type="range" id="DB" min="0.55" max="1.1" step="0.01"><b id="DB_v"></b></label>
+      <label>Полнота обводов <input type="range" id="full" min="0.7" max="1.3" step="0.05"><b id="full_v"></b></label>
+      <label>Ширина кормы <input type="range" id="transom" min="0.6" max="1.3" step="0.05"><b id="transom_v"></b></label>
+      <label>Полнота носа <input type="range" id="bow" min="0.7" max="1.3" step="0.05"><b id="bow_v"></b></label>
+      <label>Стенка печати, мм <input type="range" id="wall" min="1.2" max="2.4" step="0.2"><b id="wall_v"></b></label>
+      <label>Балласт, г <input type="range" id="ballast" min="0" max="500" step="10"><b id="ballast_v"></b></label>
+      <label>Балласт по длине, доля L <input type="range" id="ballastFx" min="0.15" max="0.8" step="0.01"><b id="ballastFx_v"></b></label>
+    </div>
+  </div>
+
+  <div id="live" class="cells"></div>
+  <div class="ctrl" id="checks"></div>
+
+  <h2>Теоретический чертёж и компоновка</h2>
+  <p>Плашки компонентов на боковой проекции можно тянуть вдоль корпуса —
+  дифферент и центр тяжести пересчитаются. Кнопка сбрасывает компоновку
+  к рекомендуемой. <button id="reset" style="font:13px system-ui">Сброс компоновки</button></p>
+  <div id="side"></div>
+  <div id="plan" style="margin-top:10px"></div>
+  <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:10px;margin-top:10px">
+    <div><div id="bodyplan"></div></div>
+    <div><div id="gzplot"></div>
+      <p class="note">Диаграмма статической остойчивости: плечо l(θ) считается
+      честными наклонениями сечений с сохранением объёма. Красная точка —
+      вход кромки палубы в воду.</p></div>
+  </div>
+  <h3>Ведомость компоновки</h3>
+  <div id="legend"></div>
+
+  <h2>Решение по шагам</h2>
+  <div id="steps"></div>
+
+  <h2>Экспорт</h2>
+  <div class="btns">
+    <button id="exp_stl">Скачать STL корпуса (на печать)</button>
+    <button id="exp_json">Скачать boat.json (для КОМПАС-3D)</button>
+    <button id="exp_csv">Таблица ординат (CSV)</button>
+  </div>
+  <p class="note">STL — полая оболочка с выбранной толщиной стенки и открытой
+  палубой, миллиметры, килем вниз: в слайсере поверните корму на стол или
+  разрежьте на секции (<a href="build">как печатать</a>). boat.json — исходник
+  для <a href="kompas">макроса КОМПАС-3D</a>: нативный лофт корпуса и сборка с
+  болванками компонентов. Таблица ординат — для проверки построений
+  и теоретического чертежа вручную.</p>
+
+  <h2>Какой прототип выбрать</h2>
+  <p>Все три корпуса «проходят по нормам»: плавают, остойчивы, печатаются.
+  Критерии же тянут в разные стороны — быстрый транспорт неповоротлив,
+  манёвренный катер тесен для аппаратуры. Такой выбор — задача
+  многокритериального решения; таблица ниже уходит в движок
+  <a href="https://shadeswd.duckdns.org/relmet/">Relation Metrics</a>,
+  который считает несколько способов свёртки и показывает, устойчив ли
+  ответ к вашим весам.</p>
+  <div class="relmet-choice">
+    <script type="application/json">{"title": "Обводы прототипа для первой модели", "intro": "Числовые значения скорости и метацентрической высоты взяты из этого конструктора при настройках по умолчанию (450 мм, набор согласно прототипу); качественные оценки — инженерные, по шкале 1…5. Поменяйте веса под свои приоритеты — например, если строите для тесного пруда, поднимите вес манёвренности.", "scale": "смешанная: измеримые критерии в своих единицах, качественные 1…5", "criteria": [{"name": "Скорость хода (прогноз)", "unit": "м/с", "w": 0.25, "dir": "max", "hint": "оценка конструктора при 450 мм"}, {"name": "Метацентрическая высота", "unit": "мм", "w": 0.2, "dir": "max", "hint": "при рекомендуемой компоновке"}, {"name": "Вместимость под аппаратуру", "w": 0.2, "dir": "max", "hint": "ширина и высота трюма в средней части"}, {"name": "Простота печати и герметизации", "w": 0.2, "dir": "max", "hint": "нависания подзора, число дейдвудов"}, {"name": "Манёвренность", "w": 0.15, "dir": "max", "hint": "разнотяг двух винтов разворачивает на месте"}], "alternatives": [{"id": "Буксир", "values": [1.97, 13.0, 5, 4, 4]}, {"id": "Катер Athena", "values": [0.97, 16.7, 2, 3, 5]}, {"id": "Транспорт Серии 60", "values": [2.27, 9.6, 4, 3, 3]}], "note": "При весах по умолчанию ансамбль методов единогласно выбирает буксир — потому он и стоит первым в списке конструктора. Катер Athena проигрывает по скорости не из-за обводов, а из-за маленьких моторов N20 набора «Микро»: его стихия — манёвр, а не гонка."}</script>
+  </div>
+
+  <h2>Что дальше</h2>
+  <p>Модель рассчитана — теперь <a href="parts">закупите компоненты</a>,
+  <a href="build">напечатайте и соберите корпус</a>,
+  <a href="seal">покройте лаком</a>, <a href="control">прошейте плату</a> —
+  и <a href="trials">на испытания</a>. Как устроен каждый расчёт —
+  в <a href="theory">методике</a>.</p>
+</main>
+<script src="assets/common.js"></script>
+<script src="assets/protodata.js"></script>
+<script src="assets/hull.js"></script>
+<script src="assets/stl.js"></script>
+<script src="assets/parts.js"></script>
+<script src="assets/boat.js"></script>
+<script src="/relmet-choice.js" defer></script>
+</body>
+</html>

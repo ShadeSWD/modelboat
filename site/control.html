@@ -1,0 +1,615 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Электроника и прошивка</title>
+<meta name="description" content="Распайка электроники модели судна по шагам, установка Arduino IDE и ядра esp32, полные прошивки для наборов «Микро» (ESP32-C3) и «Классика» (Nano + HM-10), текстовый протокол управления по BLE UART с failsafe.">
+<link rel="stylesheet" href="assets/style.css">
+<style>
+table.el { width:100%; border-collapse:collapse; font:14px system-ui, sans-serif; margin:10px 0; }
+table.el th, table.el td { border-bottom:1px solid var(--line); padding:6px 8px; text-align:left; vertical-align:top; }
+table.el th { color:#3a3a42; font-weight:600; }
+pre.code { background:#101418; color:#e6e8ea; border-radius:12px; padding:14px 16px;
+  overflow-x:auto; font:12.5px/1.5 ui-monospace, Consolas, monospace; }
+pre.code code { background:none; color:inherit; padding:0; font-size:inherit; }
+ol.steps { padding-left:22px; }
+ol.steps li { margin:8px 0; }
+.proto { font:600 14px ui-monospace, monospace; background:var(--chip); border-radius:6px; padding:1px 8px; white-space:nowrap; }
+</style>
+</head>
+<body>
+<script src="assets/shell.js"></script>
+<script src="assets/site.js" data-root="./" data-page="control"></script>
+<main class="wrap">
+  <h1>Электроника и прошивка<br><span style="font-weight:400;font-size:.72em">распайка, заливка скетчей и протокол управления</span></h1>
+  <p class="lead">Здесь модель оживает: паяем электронику по таблицам,
+  ставим Arduino IDE, заливаем прошивку — и лодка начинает понимать команды
+  с телефона. Оба набора из раздела <a href="parts">«Компоненты»</a> говорят
+  на одном текстовом протоколе поверх BLE UART, поэтому
+  <a href="panel">браузерный пульт</a> у них общий. Схемы соединений в
+  картинках — на странице компонентов; ниже те же соединения в виде
+  монтажных таблиц.</p>
+
+  <div class="note warn"><b>Правило номер один.</b> Первое включение и все
+  проверки — с моторами <i>без гребных винтов</i> и с моделью на подставке.
+  Винты ставятся только перед бассейном: страница
+  <a href="trials">«Испытания»</a>.</div>
+
+  <h2>Распайка набора «Микро» (ESP32-C3 + MX1508)</h2>
+  <table class="el">
+    <thead><tr><th>№</th><th>Откуда</th><th>Куда</th><th>Примечание</th></tr></thead>
+    <tbody>
+      <tr><td>1</td><td>Холдер 18650: красный (+)</td><td>TP4056: <b>B+</b></td>
+        <td>Банку в холдер вставлять в самом конце.</td></tr>
+      <tr><td>2</td><td>Холдер 18650: чёрный (−)</td><td>TP4056: <b>B−</b></td>
+        <td>Пайка быстрая, площадки маленькие.</td></tr>
+      <tr><td>3</td><td>TP4056: <b>OUT+</b></td><td>Выключатель KCD11, контакт 1</td>
+        <td>Именно OUT, а не B: иначе защита не работает.</td></tr>
+      <tr><td>4</td><td>Выключатель, контакт 2</td><td>MX1508 <b>VCC</b> и ESP32-C3 <b>5V</b></td>
+        <td>Одна точка «+БАТ»: разводится на два провода.</td></tr>
+      <tr><td>5</td><td>TP4056: <b>OUT−</b></td><td>MX1508 <b>GND</b> и ESP32-C3 <b>GND</b></td>
+        <td>Общий минус — все GND соединены.</td></tr>
+      <tr><td>6</td><td>ESP32-C3: <b>GPIO4, GPIO5</b></td><td>MX1508 <b>IN1, IN2</b></td>
+        <td>Левый мотор: вперёд/назад.</td></tr>
+      <tr><td>7</td><td>ESP32-C3: <b>GPIO6, GPIO7</b></td><td>MX1508 <b>IN3, IN4</b></td>
+        <td>Правый мотор.</td></tr>
+      <tr><td>8</td><td>MX1508: <b>MOTOR-A</b></td><td>Левый N20</td>
+        <td>Если «вперёд» крутит назад — поменять два провода местами.</td></tr>
+      <tr><td>9</td><td>MX1508: <b>MOTOR-B</b></td><td>Правый N20</td>
+        <td>То же самое.</td></tr>
+      <tr><td>10</td><td>«+БАТ» → резистор 100 кОм → <b>GPIO3</b> → резистор 100 кОм → GND</td>
+        <td colspan="2">Делитель напряжения: на АЦП приходит половина
+        напряжения батареи (не больше 2,1 В — безопасно для 3,3-вольтового
+        входа).</td></tr>
+    </tbody>
+  </table>
+  <p class="small">Страповые выводы GPIO2, GPIO8 и GPIO9 платы C3 сознательно
+  не заняты — с ними плата может не стартовать, если драйвер подтянет их при
+  включении.</p>
+
+  <h2>Распайка набора «Классика» (Nano + HM-10 + MX1508 + SG90)</h2>
+  <table class="el">
+    <thead><tr><th>№</th><th>Откуда</th><th>Куда</th><th>Примечание</th></tr></thead>
+    <tbody>
+      <tr><td>1</td><td>Холдер 2×18650 (+)</td><td>Выключатель KCD11</td>
+        <td>Банки — со встроенной защитой; заряд во внешнем ЗУ.</td></tr>
+      <tr><td>2</td><td>Выключатель</td><td>MX1508 <b>VCC</b> и mini-360 <b>IN+</b></td>
+        <td>Шина «+7,4 В».</td></tr>
+      <tr><td>3</td><td>Холдер (−)</td><td>MX1508 <b>GND</b>, mini-360 <b>IN−</b>, общий минус</td>
+        <td>Все GND схемы соединены в одну точку.</td></tr>
+      <tr><td>4</td><td>mini-360 <b>OUT+</b> (выставить 5,0 В!)</td>
+        <td>Nano <b>5V</b>, серво <b>красный</b>, HM-10 <b>VCC</b></td>
+        <td>Сначала крутим подстроечник под мультиметром, потом паяем
+        потребителей.</td></tr>
+      <tr><td>5</td><td>Nano <b>D5, D6</b></td><td>MX1508 <b>IN1+IN3, IN2+IN4</b></td>
+        <td>Каналы драйвера в параллель: IN1 спаян с IN3, IN2 — с IN4,
+        выходы A и B — попарно на мотор (до 3 А).</td></tr>
+      <tr><td>6</td><td>MX1508 выходы (A∥B)</td><td>Мотор 130</td>
+        <td>Полярность подбирается по направлению «вперёд».</td></tr>
+      <tr><td>7</td><td>Nano <b>D9</b></td><td>Серво SG90, <b>оранжевый</b> провод</td>
+        <td>Коричневый — GND, красный — 5 В.</td></tr>
+      <tr><td>8</td><td>Nano <b>D11</b> → 1 кОм → узел → HM-10 <b>RXD</b>; узел → 2 кОм → GND</td>
+        <td colspan="2">Делитель уровня: вход RXD модуля трёхвольтовый,
+        напрямую с пятивольтовой Nano его подключать нельзя.</td></tr>
+      <tr><td>9</td><td>HM-10 <b>TXD</b></td><td>Nano <b>D10</b></td>
+        <td>В эту сторону делитель не нужен: 3,3 В Nano понимает как «1».</td></tr>
+      <tr><td>10</td><td>«+7,4 В» → 10 кОм → <b>A0</b> → 4,7 кОм → GND</td>
+        <td colspan="2">Делитель напряжения батареи: при 8,4 В на A0 приходит
+        2,7 В.</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Готовим Arduino IDE</h2>
+  <ol class="steps">
+    <li>Скачиваем и ставим <b>Arduino IDE 2</b> с arduino.cc (Windows / macOS /
+    Linux).</li>
+    <li><b>Для «Микро»:</b> File → Preferences → Additional boards manager URLs,
+    вставить адрес пакета esp32:<br>
+    <code>https://espressif.github.io/arduino-esp32/package_esp32_index.json</code><br>
+    Затем Boards Manager → найти «esp32 by Espressif Systems» → Install.
+    Плата: <b>ESP32C3 Dev Module</b>, обязательно включить
+    <b>USB CDC On Boot: Enabled</b> — иначе не будет ни порта, ни монитора.</li>
+    <li><b>Для «Классики»:</b> ничего доставлять не нужно, плата
+    <b>Arduino Nano</b>; у клонов с CH340 в меню Processor выбрать
+    <b>ATmega328P (Old Bootloader)</b>. В Windows может понадобиться драйвер
+    CH340 (ставится один раз).</li>
+    <li>Открыть скетч (полные тексты — ниже, файлы лежат в каталоге
+    <code>arduino/</code> репозитория сайта), выбрать порт, нажать
+    «Загрузка».</li>
+    <li>Если ESP32-C3 не определяется: зажать кнопку <b>BOOT</b>, коротко
+    нажать <b>RST</b>, отпустить BOOT — плата в режиме загрузчика.</li>
+  </ol>
+  <div class="note tip">Прошивать плату можно до пайки — так удобнее искать
+  ошибки. HM-10 настраивать не нужно: заводские 9600 бод и имя по умолчанию
+  прошивку полностью устраивают.</div>
+
+  <h2>Протокол управления</h2>
+  <p>Обе прошивки принимают <b>текстовые строки</b> по BLE UART. «Микро»
+  поднимает стандартный сервис Nordic UART (NUS,
+  <code>6e400001-b5a3-f393-e0a9-e50e24dcca9e</code>), у HM-10 — свой родной
+  сервис <code>FFE0</code> с характеристикой <code>FFE1</code>. Каждая команда
+  заканчивается переводом строки <code>\n</code>:</p>
+  <table class="el">
+    <thead><tr><th>Команда</th><th>Кто понимает</th><th>Смысл</th></tr></thead>
+    <tbody>
+      <tr><td><span class="proto">T&lt;лев&gt;,&lt;прав&gt;\n</span></td>
+        <td>«Микро»</td>
+        <td>Тяга левого и правого вала, каждая от −100 до 100 (проценты;
+        минус — назад). Пример: <span class="proto">T60,40\n</span> —
+        плавный поворот вправо на ходу.</td></tr>
+      <tr><td><span class="proto">M&lt;газ&gt;,&lt;руль&gt;\n</span></td>
+        <td>«Классика»</td>
+        <td>Газ −100…100 и руль −100…100 (минус — влево). Пример:
+        <span class="proto">M80,-30\n</span>.</td></tr>
+      <tr><td><span class="proto">S\n</span></td><td>обе</td>
+        <td>Немедленный стоп: тяга 0, руль прямо.</td></tr>
+      <tr><td><span class="proto">V&lt;мВ&gt;\n</span></td><td>обе → пульт</td>
+        <td>Телеметрия: напряжение батареи в милливольтах, раз в 2 с
+        (например <span class="proto">V3982\n</span>).</td></tr>
+    </tbody>
+  </table>
+  <p>Три защитных механизма прошивок:</p>
+  <ul>
+    <li><b>Failsafe.</b> Нет ни одной команды в течение 1000 мс (телефон ушёл
+    из зоны, экран погас, страница закрыта) — моторы останавливаются, руль
+    прямо. Поэтому пульт обязан слать команды регулярно: наш браузерный пульт
+    держит поток 10 Гц с heartbeat.</li>
+    <li><b>Плавный разгон.</b> ШИМ меняется не быстрее заданного шага за такт
+    (полный ход набирается за ~0,6 с): броски тока не проседают батарею и не
+    перезапускают контроллер, кардан не получает ударов.</li>
+    <li><b>Контроль разряда.</b> Напряжение батареи меряется делителем; ниже
+    порога (3,3 В на банку) тяга ограничивается до 40 % — хватит дойти до
+    берега, а Li-ion не уйдёт в глубокий разряд (окончательно его защищает
+    плата DW01 на TP4056 или встроенная защита банок).</li>
+  </ul>
+
+  <h2>Прошивка «Микро»: ESP32-C3, два вала</h2>
+  <p class="small">Файл в репозитории:
+  <code>arduino/micro_esp32c3/micro_esp32c3.ino</code></p>
+  <pre class="code"><code>/*
+ * «Микро» — двухвальный катер 350–450 мм без руля.
+ * Плата: ESP32-C3 SuperMini. Драйвер: MX1508. Моторы: 2 × N20 (6 В, 1:10).
+ * Питание: 1 × 18650 через плату защиты TP4056.
+ *
+ * Связь: Bluetooth LE, сервис Nordic UART (NUS). Протокол — текстовые
+ * строки, завершаются '\n' (см. страницу «Электроника и прошивка»):
+ *   "T&lt;левый&gt;,&lt;правый&gt;\n"  — тяга валов, каждая −100…100 (проценты);
+ *   "S\n"                  — немедленный стоп;
+ * телеметрия от лодки: "V&lt;милливольты батареи&gt;\n" раз в 2 с.
+ *
+ * Защиты: failsafe (нет команд 1000 мс — стоп), плавный разгон (slew rate),
+ * ограничение тяги при разряде батареи ниже порога.
+ *
+ * Среда: Arduino IDE + ядро esp32 (Espressif), плата «ESP32C3 Dev Module»,
+ * USB CDC On Boot: Enabled. Используются только штатные средства ядра:
+ * библиотека BLE из комплекта ядра, analogWrite (ШИМ через LEDC),
+ * analogReadMilliVolts (калиброванный АЦП).
+ */
+
+#include &lt;BLEDevice.h&gt;
+#include &lt;BLEServer.h&gt;
+#include &lt;BLEUtils.h&gt;
+#include &lt;BLE2902.h&gt;
+
+/* ---------- выводы (без страповых GPIO2/8/9 платы C3) ---------- */
+const int PIN_L_IN1 = 4;   // MX1508 IN1 — левый мотор, «вперёд»
+const int PIN_L_IN2 = 5;   // MX1508 IN2 — левый мотор, «назад»
+const int PIN_R_IN1 = 6;   // MX1508 IN3 — правый мотор, «вперёд»
+const int PIN_R_IN2 = 7;   // MX1508 IN4 — правый мотор, «назад»
+const int PIN_VBAT  = 3;   // делитель 100к/100к от плюса батареи (АЦП)
+const int PIN_LED   = 8;   // светодиод платы (активный уровень — LOW)
+
+/* ---------- настройки ---------- */
+const unsigned long FAILSAFE_MS  = 1000; // нет команд дольше — стоп
+const unsigned long TICK_MS      = 20;   // период цикла управления
+const unsigned long VBAT_MS      = 2000; // период телеметрии напряжения
+const int  SLEW_STEP    = 8;    // прирост ШИМ за такт (0…255): разгон ~0,6 с
+const int  VBAT_LOW_MV  = 3300; // ниже — ограничить тягу (Li-ion почти пуст)
+const int  VBAT_OK_MV   = 3450; // выше — снять ограничение (гистерезис)
+const int  LOW_CAP_PCT  = 40;   // потолок тяги на разряженной батарее, %
+
+/* ---------- UUID Nordic UART Service ---------- */
+#define NUS_SERVICE "6e400001-b5a3-f393-e0a9-e50e24dcca9e"
+#define NUS_RX      "6e400002-b5a3-f393-e0a9-e50e24dcca9e" // телефон -&gt; лодка
+#define NUS_TX      "6e400003-b5a3-f393-e0a9-e50e24dcca9e" // лодка -&gt; телефон
+
+/* ---------- состояние ---------- */
+BLECharacteristic *txChar = nullptr;
+volatile bool connected = false;
+
+int tgtL = 0, tgtR = 0;    // желаемая тяга, −100…100
+int curL = 0, curR = 0;    // текущий ШИМ со знаком, −255…255
+bool lowBatt = false;
+unsigned long lastCmdMs = 0, lastTickMs = 0, lastVbatMs = 0;
+
+char lineBuf[32];
+size_t lineLen = 0;
+
+/* ---------- разбор строки протокола ---------- */
+int clampPct(long v) {
+  if (v &lt; -100) return -100;
+  if (v &gt; 100) return 100;
+  return (int)v;
+}
+
+void handleLine(const char *s) {
+  if (s[0] == 'S') {                 // стоп
+    tgtL = 0; tgtR = 0;
+    lastCmdMs = millis();
+    return;
+  }
+  if (s[0] == 'T') {                 // T&lt;левый&gt;,&lt;правый&gt;
+    char *end = nullptr;
+    long a = strtol(s + 1, &amp;end, 10);
+    if (end == s + 1 || *end != ',') return;   // повреждённая строка
+    char *end2 = nullptr;
+    long b = strtol(end + 1, &amp;end2, 10);
+    if (end2 == end + 1) return;
+    tgtL = clampPct(a);
+    tgtR = clampPct(b);
+    lastCmdMs = millis();
+  }
+}
+
+void feedByte(char c) {              // накапливаем строку до '\n'
+  if (c == '\n' || c == '\r') {
+    if (lineLen &gt; 0) {
+      lineBuf[lineLen] = '\0';
+      handleLine(lineBuf);
+      lineLen = 0;
+    }
+    return;
+  }
+  if (lineLen &lt; sizeof(lineBuf) - 1) lineBuf[lineLen++] = c;
+  else lineLen = 0;                  // переполнение — строку отбрасываем
+}
+
+/* ---------- BLE-обработчики ---------- */
+class ServerCB : public BLEServerCallbacks {
+  void onConnect(BLEServer *) override {
+    connected = true;
+    digitalWrite(PIN_LED, LOW);      // светодиод горит — связь есть
+  }
+  void onDisconnect(BLEServer *srv) override {
+    connected = false;
+    tgtL = 0; tgtR = 0;              // обрыв связи — стоп
+    digitalWrite(PIN_LED, HIGH);
+    srv-&gt;startAdvertising();         // снова видимы для подключения
+  }
+};
+
+class RxCB : public BLECharacteristicCallbacks {
+  void onWrite(BLECharacteristic *ch) override {
+    const uint8_t *d = ch-&gt;getData();
+    size_t n = ch-&gt;getLength();
+    for (size_t i = 0; i &lt; n; i++) feedByte((char)d[i]);
+  }
+};
+
+/* ---------- моторы ---------- */
+/* Один канал MX1508: вперёд — ШИМ на IN1, ноль на IN2; назад — наоборот. */
+void applyMotor(int pin1, int pin2, int pwm) {
+  if (pwm &gt;= 0) {
+    analogWrite(pin2, 0);
+    analogWrite(pin1, pwm);
+  } else {
+    analogWrite(pin1, 0);
+    analogWrite(pin2, -pwm);
+  }
+}
+
+/* шаг плавного разгона: current тянется к target не быстрее SLEW_STEP */
+int slew(int current, int target) {
+  if (current &lt; target) {
+    current += SLEW_STEP;
+    if (current &gt; target) current = target;
+  } else if (current &gt; target) {
+    current -= SLEW_STEP;
+    if (current &lt; target) current = target;
+  }
+  return current;
+}
+
+/* ---------- батарея ---------- */
+int readBatteryMv() {
+  // делитель 100к/100к: на выводе — половина напряжения батареи
+  long mv = 0;
+  for (int i = 0; i &lt; 4; i++) mv += analogReadMilliVolts(PIN_VBAT);
+  return (int)(mv / 4 * 2);
+}
+
+void setup() {
+  pinMode(PIN_LED, OUTPUT);
+  digitalWrite(PIN_LED, HIGH);
+  pinMode(PIN_L_IN1, OUTPUT); pinMode(PIN_L_IN2, OUTPUT);
+  pinMode(PIN_R_IN1, OUTPUT); pinMode(PIN_R_IN2, OUTPUT);
+  applyMotor(PIN_L_IN1, PIN_L_IN2, 0);
+  applyMotor(PIN_R_IN1, PIN_R_IN2, 0);
+
+  Serial.begin(115200);              // отладка по USB (не обязательна)
+
+  BLEDevice::init("ModelBoat-Micro");
+  BLEServer *server = BLEDevice::createServer();
+  server-&gt;setCallbacks(new ServerCB());
+
+  BLEService *svc = server-&gt;createService(NUS_SERVICE);
+  txChar = svc-&gt;createCharacteristic(NUS_TX, BLECharacteristic::PROPERTY_NOTIFY);
+  txChar-&gt;addDescriptor(new BLE2902());
+  BLECharacteristic *rxChar = svc-&gt;createCharacteristic(
+    NUS_RX,
+    BLECharacteristic::PROPERTY_WRITE | BLECharacteristic::PROPERTY_WRITE_NR);
+  rxChar-&gt;setCallbacks(new RxCB());
+  svc-&gt;start();
+
+  BLEAdvertising *adv = BLEDevice::getAdvertising();
+  adv-&gt;addServiceUUID(NUS_SERVICE);  // пульт фильтрует устройства по NUS
+  adv-&gt;setScanResponse(true);
+  BLEDevice::startAdvertising();
+
+  lastCmdMs = millis();
+}
+
+void loop() {
+  unsigned long now = millis();
+
+  /* failsafe: команд нет дольше секунды — глушим моторы */
+  if (now - lastCmdMs &gt; FAILSAFE_MS) { tgtL = 0; tgtR = 0; }
+
+  /* телеметрия и контроль разряда */
+  if (now - lastVbatMs &gt;= VBAT_MS) {
+    lastVbatMs = now;
+    int mv = readBatteryMv();
+    if (mv &lt; VBAT_LOW_MV) lowBatt = true;
+    else if (mv &gt; VBAT_OK_MV) lowBatt = false;
+    if (connected &amp;&amp; txChar) {
+      char msg[16];
+      snprintf(msg, sizeof(msg), "V%d\n", mv);
+      txChar-&gt;setValue((uint8_t *)msg, strlen(msg));
+      txChar-&gt;notify();
+    }
+  }
+
+  /* цикл управления с плавным разгоном */
+  if (now - lastTickMs &gt;= TICK_MS) {
+    lastTickMs = now;
+    int cap = lowBatt ? LOW_CAP_PCT : 100;     // потолок тяги, %
+    int wantL = constrain(tgtL, -cap, cap) * 255 / 100;
+    int wantR = constrain(tgtR, -cap, cap) * 255 / 100;
+    curL = slew(curL, wantL);
+    curR = slew(curR, wantR);
+    applyMotor(PIN_L_IN1, PIN_L_IN2, curL);
+    applyMotor(PIN_R_IN1, PIN_R_IN2, curR);
+  }
+}</code></pre>
+
+  <h2>Прошивка «Классика»: Nano + HM-10, мотор и руль</h2>
+  <p class="small">Файл в репозитории:
+  <code>arduino/classic_nano_hm10/classic_nano_hm10.ino</code></p>
+  <pre class="code"><code>/*
+ * «Классика» — одновальное судно 450–600 мм с рулём.
+ * Плата: Arduino Nano (ATmega328P). Связь: BLE-модуль HM-10 (FFE0/FFE1).
+ * Драйвер: MX1508 (оба канала запараллелены на один мотор класса 130).
+ * Руль: серво SG90. Питание: 2 × 18650 (6,0–8,4 В), логика и серво — 5 В
+ * от понижающего преобразователя mini-360.
+ *
+ * Протокол — текстовые строки, завершаются '\n':
+ *   "M&lt;газ&gt;,&lt;руль&gt;\n" — газ −100…100 %, руль −100…100 % (минус — влево);
+ *   "S\n"             — немедленный стоп (газ 0, руль прямо);
+ * телеметрия: "V&lt;милливольты батареи&gt;\n" раз в 2 с.
+ *
+ * Защиты: failsafe 1000 мс, плавный разгон, потолок ШИМ ~70 % (мотор 3–6 В
+ * на батарее 8,4 В), ограничение тяги при разряде ниже 3,2 В на банку.
+ *
+ * Подключение HM-10: TX модуля -&gt; D10 (напрямую), D11 -&gt; RX модуля через
+ * делитель 1 кОм / 2 кОм (вход модуля трёхвольтовый!).
+ */
+
+#include &lt;SoftwareSerial.h&gt;
+#include &lt;Servo.h&gt;
+
+/* ---------- выводы ---------- */
+const int PIN_BT_RX   = 10;  // слушаем TX модуля HM-10
+const int PIN_BT_TX   = 11;  // говорим в RX модуля (через делитель!)
+const int PIN_M_IN1   = 5;   // MX1508 IN1 (+IN3) — «вперёд» (ШИМ таймера 0)
+const int PIN_M_IN2   = 6;   // MX1508 IN2 (+IN4) — «назад»  (ШИМ таймера 0)
+const int PIN_SERVO   = 9;   // сигнал серво руля (Servo.h, таймер 1)
+const int PIN_VBAT    = A0;  // делитель 10 кОм / 4,7 кОм от плюса батареи
+
+/* ---------- настройки ---------- */
+const unsigned long FAILSAFE_MS = 1000; // нет команд дольше — стоп
+const unsigned long TICK_MS     = 20;   // период цикла управления
+const unsigned long VBAT_MS     = 2000; // период телеметрии
+const int SLEW_STEP   = 6;     // прирост ШИМ за такт: полный газ за ~0,6 с
+const int PWM_MAX     = 180;   // потолок ШИМ: 8,4 В * 180/255 ≈ 5,9 В на моторе
+const int VBAT_LOW_MV = 6400;  // 2 банки по 3,2 В — батарея почти пуста
+const int VBAT_OK_MV  = 6700;  // гистерезис снятия ограничения
+const int LOW_CAP_PCT = 40;    // потолок газа на разряженной батарее, %
+const int RUD_RANGE   = 36;    // отклонение серво от середины, град (на 100 %)
+
+/* делитель напряжения: R1 = 10 кОм (вверх), R2 = 4,7 кОм (вниз) */
+const float VBAT_K = 5.0 / 1023.0 * (10.0 + 4.7) / 4.7 * 1000.0; // АЦП -&gt; мВ
+
+SoftwareSerial bt(PIN_BT_RX, PIN_BT_TX);
+Servo rudder;
+
+/* ---------- состояние ---------- */
+int tgtThr = 0, tgtRud = 0;   // команды с пульта, −100…100
+int curPwm = 0;               // текущий ШИМ мотора со знаком, −PWM_MAX…PWM_MAX
+bool lowBatt = false;
+unsigned long lastCmdMs = 0, lastTickMs = 0, lastVbatMs = 0;
+
+char lineBuf[32];
+byte lineLen = 0;
+
+/* ---------- разбор строки протокола ---------- */
+int clampPct(long v) {
+  if (v &lt; -100) return -100;
+  if (v &gt; 100) return 100;
+  return (int)v;
+}
+
+void handleLine(const char *s) {
+  if (s[0] == 'S') {                       // стоп
+    tgtThr = 0; tgtRud = 0;
+    lastCmdMs = millis();
+    return;
+  }
+  if (s[0] == 'M') {                       // M&lt;газ&gt;,&lt;руль&gt;
+    char *end = NULL;
+    long a = strtol(s + 1, &amp;end, 10);
+    if (end == s + 1 || *end != ',') return;
+    char *end2 = NULL;
+    long b = strtol(end + 1, &amp;end2, 10);
+    if (end2 == end + 1) return;
+    tgtThr = clampPct(a);
+    tgtRud = clampPct(b);
+    lastCmdMs = millis();
+  }
+}
+
+void feedByte(char c) {
+  if (c == '\n' || c == '\r') {
+    if (lineLen &gt; 0) {
+      lineBuf[lineLen] = '\0';
+      handleLine(lineBuf);
+      lineLen = 0;
+    }
+    return;
+  }
+  if (lineLen &lt; sizeof(lineBuf) - 1) lineBuf[lineLen++] = c;
+  else lineLen = 0;                        // переполнение — отбрасываем
+}
+
+/* ---------- мотор на запараллеленном MX1508 ---------- */
+void applyMotor(int pwm) {
+  if (pwm &gt;= 0) {
+    analogWrite(PIN_M_IN2, 0);
+    analogWrite(PIN_M_IN1, pwm);
+  } else {
+    analogWrite(PIN_M_IN1, 0);
+    analogWrite(PIN_M_IN2, -pwm);
+  }
+}
+
+int slew(int current, int target) {
+  if (current &lt; target) {
+    current += SLEW_STEP;
+    if (current &gt; target) current = target;
+  } else if (current &gt; target) {
+    current -= SLEW_STEP;
+    if (current &lt; target) current = target;
+  }
+  return current;
+}
+
+int readBatteryMv() {
+  long a = 0;
+  for (byte i = 0; i &lt; 4; i++) a += analogRead(PIN_VBAT);
+  return (int)(a / 4 * VBAT_K);
+}
+
+void setup() {
+  pinMode(PIN_M_IN1, OUTPUT);
+  pinMode(PIN_M_IN2, OUTPUT);
+  applyMotor(0);
+  rudder.attach(PIN_SERVO);
+  rudder.write(90);                        // руль прямо
+
+  Serial.begin(115200);                    // отладка по USB
+  bt.begin(9600);                          // заводская скорость HM-10
+
+  lastCmdMs = millis();
+}
+
+void loop() {
+  unsigned long now = millis();
+
+  /* приём команд: и с HM-10, и с USB (удобно для наладки без телефона) */
+  while (bt.available()) feedByte((char)bt.read());
+  while (Serial.available()) feedByte((char)Serial.read());
+
+  /* failsafe: связь пропала — стоп, руль прямо */
+  if (now - lastCmdMs &gt; FAILSAFE_MS) { tgtThr = 0; tgtRud = 0; }
+
+  /* телеметрия и контроль разряда */
+  if (now - lastVbatMs &gt;= VBAT_MS) {
+    lastVbatMs = now;
+    int mv = readBatteryMv();
+    if (mv &lt; VBAT_LOW_MV) lowBatt = true;
+    else if (mv &gt; VBAT_OK_MV) lowBatt = false;
+    bt.print('V'); bt.print(mv); bt.print('\n');
+  }
+
+  /* цикл управления */
+  if (now - lastTickMs &gt;= TICK_MS) {
+    lastTickMs = now;
+    int cap = lowBatt ? LOW_CAP_PCT : 100;
+    int thr = constrain(tgtThr, -cap, cap);
+    int want = (int)((long)thr * PWM_MAX / 100);
+    curPwm = slew(curPwm, want);
+    applyMotor(curPwm);
+    /* руль без сглаживания: серво сама ограничивает скорость */
+    rudder.write(90 + (int)((long)tgtRud * RUD_RANGE / 100));
+  }
+}</code></pre>
+
+  <h2>Чем управлять</h2>
+  <p>Основной пульт — страница <a href="panel">«Пульт в браузере»</a>:
+  виртуальный джойстик через Web Bluetooth, работает в Chrome и Edge на
+  Android и на настольных компьютерах, ничего устанавливать не нужно.
+  Запасные варианты:</p>
+  <table class="el">
+    <thead><tr><th>Вариант</th><th>Где работает</th><th>Честные ограничения</th></tr></thead>
+    <tbody>
+      <tr><td><b>Serial Bluetooth Terminal</b> (Android)</td>
+        <td>И BLE (ESP32-C3, HM-10), и Classic (HC-05)</td>
+        <td>Джойстика нет, но на кнопки M1–M7 назначаются наши команды
+        (<span class="proto">M60,0\n</span>, <span class="proto">S\n</span>…) —
+        отличный инструмент наладки. Failsafe будет глушить моторы через
+        секунду после каждой команды — для стендовой проверки это даже
+        удобно.</td></tr>
+      <tr><td><b>Arduino Bluetooth Controller</b> и подобные
+        джойстики-приложения (Android)</td>
+        <td>Только HC-05/HC-06 (Bluetooth Classic)</td>
+        <td>Вариант для замены «HM-10 → HC-05» из таблицы аналогов. В
+        настройках приложения кнопкам задаются наши строки-команды. С BLE и
+        iPhone не работает.</td></tr>
+      <tr><td><b>Dabble</b> (STEMpedia)</td>
+        <td>—</td>
+        <td>Проверено и <b>не подходит</b>: Dabble общается собственным
+        двоичным протоколом и требует свою библиотеку в скетче — наш текстовый
+        BLE UART он понимать не будет. Указан здесь, чтобы не тратить время на
+        попытки.</td></tr>
+      <tr><td><b>iPhone</b></td>
+        <td>Bluefy (браузер с Web Bluetooth) или Bluefruit Connect (режим
+        UART-терминала)</td>
+        <td>Safari и Chrome на iOS Web Bluetooth не поддерживают — это
+        ограничение самой iOS. Bluefy открывает наш пульт целиком; Bluefruit
+        Connect годится как терминал для команд вручную. Оба видят только
+        BLE-наборы (ESP32-C3, HM-10), HC-05 для iPhone недоступен в
+        принципе.</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Куда дальше</h2>
+  <div class="cards">
+    <a class="card demo" href="panel">
+      <h3>Пульт в браузере →</h3>
+      <p>Подключиться к лодке и подвигать джойстиком — прямо сейчас, пока
+      модель стоит на столе без винтов.</p>
+    </a>
+    <a class="card" href="trials">
+      <h3>Испытания →</h3>
+      <p>Программа стендовых и ходовых испытаний: от «сухой» проверки
+      реверса до кренования и замера скорости.</p>
+    </a>
+    <a class="card" href="parts">
+      <h3>Компоненты →</h3>
+      <p>Схемы соединений, массы, токи и цены всех деталей обоих
+      наборов.</p>
+    </a>
+  </div>
+</main>
+</body>
+</html>

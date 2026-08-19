@@ -1,0 +1,45 @@
+@import url("base.css");
+/* Модель судна для 3D-печати — стиль сайта.
+ * Палитра своя (морской сине-зелёный), фон — волны с корпусом на них. */
+:root {
+  --bg: #eef6f4;
+  --paper: #ffffff;
+  --ink: #1a1a1e;
+  --muted: #6b6b74;
+  --line: #d5d9d2;
+  --accent: #0e6b5e;
+  --accent2: #2b4fa0;
+  --green: #1d7a3e;
+  --chip: #e7efe9;
+  --link: #2b4fa0;
+  --shadow: 0 1px 3px rgba(20,20,30,.08), 0 8px 24px rgba(20,20,30,.06);
+}
+body {
+  margin: 0; background-color: var(--bg); background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='84' viewBox='0 0 140 84'%3E%3Cg fill='none' stroke='%230e6b5e' stroke-width='1.3' opacity='0.10'%3E%3Cpath d='M0 30 Q 17 20 35 30 T 70 30 T 105 30 T 140 30'/%3E%3Cpath d='M0 62 Q 17 52 35 62 T 70 62 T 105 62 T 140 62' opacity='0.7'/%3E%3Cpath d='M52 22 L 88 22 L 82 29 L 58 29 Z'/%3E%3Cline x1='70' y1='22' x2='70' y2='12'/%3E%3Cpath d='M70 12 L 79 17 L 70 20 Z'/%3E%3C/g%3E%3C/svg%3E"); color: var(--ink);
+  font: 16px/1.55 Georgia, 'Times New Roman', serif;
+}
+
+/* выключные формулы KaTeX: на узком экране прокручиваются внутри себя */
+.katex-display { overflow-x: auto; overflow-y: hidden; padding: 2px 0; }
+.katex-display > .katex { white-space: nowrap; }
+
+/* SVG-доска чертежей */
+svg.geo-board {
+  width: 100%; height: auto; display: block;
+  background: #fff; border: 1px solid var(--line); border-radius: 10px;
+  touch-action: none; user-select: none;
+}
+.red  { stroke: var(--accent); }
+.blue { stroke: var(--accent2); }
+.green{ stroke: var(--green); }
+.gray { stroke: #9a9aa2; }
+.pt { fill: #16161a; stroke: none; }
+.lbl { font: italic 14.5px Georgia, serif; fill: #16161a; paint-order: stroke; stroke: #ffffffcc; stroke-width: 3px; }
+.lbl-dim { font: 700 13px system-ui, sans-serif; fill: #101014; }
+
+/* мобильная вёрстка: таблицы, код и заметки не распирают страницу */
+main table { display: block; overflow-x: auto; border-collapse: collapse; }
+main pre { overflow-x: auto; max-width: 100%; }
+main code { overflow-wrap: anywhere; }
+main .note div { overflow-wrap: anywhere; }
+.controls label { display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; }

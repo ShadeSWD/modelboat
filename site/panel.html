@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Пульт в браузере</title>
+<meta name="description" content="Браузерный пульт радиоуправляемой модели судна: Web Bluetooth, виртуальный джойстик под палец, микшер для двухвального катера, ограничение мощности, индикатор напряжения батареи и кнопка «Стоп».">
+<link rel="stylesheet" href="assets/style.css">
+<style>
+.pult { display:flex; flex-wrap:wrap; gap:18px; align-items:flex-start; }
+.pult .col { flex:1 1 320px; min-width:0; }
+#joy { width:min(420px, 92vw); height:min(420px, 92vw); display:block; margin:0 auto;
+  border-radius:18px; background:#fff; border:1px solid var(--line); touch-action:none; }
+.conn-row { display:flex; flex-wrap:wrap; gap:10px; align-items:center; margin:10px 0; }
+.btn.big { font-size:16px; padding:10px 20px; }
+.btn.stop { background:#b3382e; border-color:#b3382e; color:#fff; font-weight:700;
+  font-size:18px; padding:12px 26px; width:100%; }
+.btn.stop:hover { filter:brightness(1.08); color:#fff; }
+.stat { display:grid; grid-template-columns:auto 1fr; gap:6px 14px;
+  font:14.5px system-ui, sans-serif; margin:12px 0; }
+.stat .k { color:var(--muted); }
+.stat .v { font:600 14.5px ui-monospace, monospace; }
+.modes { display:flex; gap:8px; flex-wrap:wrap; margin:8px 0; font-family:system-ui, sans-serif; }
+.modes label { border:1px solid var(--line); border-radius:10px; padding:8px 14px;
+  cursor:pointer; background:var(--paper); font-size:14.5px; }
+.modes input { accent-color:var(--accent2); margin-right:6px; }
+.modes label:has(input:checked) { border-color:var(--accent2); background:#eef3ff; }
+.limit { font:14.5px system-ui, sans-serif; margin:12px 0; }
+.limit input[type=range] { width:100%; accent-color:var(--accent2); }
+</style>
+</head>
+<body>
+<script src="assets/shell.js"></script>
+<script src="assets/site.js" data-root="./" data-page="panel"></script>
+<main class="wrap">
+  <h1>Пульт в браузере<br><span style="font-weight:400;font-size:.72em">телефон вместо аппаратуры радиоуправления</span></h1>
+  <p class="lead">Эта страница — настоящий пульт: браузер подключается к лодке
+  напрямую по Bluetooth LE (технология Web Bluetooth) и шлёт команды
+  <a href="control">протокола управления</a> десять раз в секунду. Работает в
+  <b>Chrome и Edge</b> на Android, Windows, Linux и macOS — по HTTPS, без
+  установки приложений. Подходит для обоих наборов: и «Микро» (ESP32-C3), и
+  «Классики» (HM-10).</p>
+  <div class="note warn"><b>Про iPhone — честно.</b> Safari и любой браузер на
+  iOS не поддерживают Web Bluetooth — это ограничение самой iOS, обойти его
+  страница не может. Варианты для владельцев iPhone: браузер
+  <b>Bluefy</b> (умеет Web Bluetooth — открыть в нём эту страницу) или
+  приложение <b>Bluefruit Connect</b> в режиме UART-терминала. Список запасных
+  пультов — на странице <a href="control">«Электроника и прошивка»</a>.</div>
+
+  <div class="pult">
+    <div class="col panel">
+      <div class="conn-row">
+        <button class="btn primary big" id="btn-connect" type="button">Подключиться</button>
+        <button class="btn" id="btn-disconnect" type="button" style="display:none">Отключиться</button>
+        <span class="badge bad" id="st-conn">нет связи</span>
+      </div>
+      <p class="small" id="st-note">Включите лодку и нажмите «Подключиться»:
+      браузер покажет список устройств рядом — выберите свою модель
+      (ModelBoat-Micro или HMSoft у HM-10).</p>
+      <div class="modes" id="mode-box">
+        <label><input type="radio" name="mode" value="twin" checked>двухвальный
+          «Микро» — разнотяг</label>
+        <label><input type="radio" name="mode" value="single">одновальный
+          «Классика» — руль</label>
+      </div>
+      <div class="limit">
+        <label for="powlim">Ограничение мощности:
+          <span class="readout" id="powlim-out">60 %</span></label>
+        <input type="range" id="powlim" min="20" max="100" step="5" value="60">
+        <div class="small">Первые выходы — на 40–60 %: модель послушнее, а
+        ошибки пилота дешевле.</div>
+      </div>
+      <div class="stat">
+        <span class="k">Батарея лодки</span><span class="v" id="st-volt">—</span>
+        <span class="k">Команда</span><span class="v" id="st-cmd">—</span>
+      </div>
+      <button class="btn stop" id="btn-stop" type="button">■ СТОП</button>
+    </div>
+    <div class="col">
+      <canvas id="joy"></canvas>
+      <p class="small" style="text-align:center;margin-top:8px">Вверх-вниз —
+      газ (вниз — задний ход), влево-вправо — руль или разнотяг. Палец
+      отпущен — модель останавливается.</p>
+    </div>
+  </div>
+
+  <h2>Как это работает</h2>
+  <p>Страница ищет устройства с сервисом Nordic UART
+  (<code>6e400001-…</code>, набор «Микро») или <code>FFE0</code> (HM-10,
+  набор «Классика») и пишет в их характеристики текстовые команды. Положение
+  джойстика превращается в тягу так: у «Классики» — напрямую в
+  <code>M&lt;газ&gt;,&lt;руль&gt;</code>, а у двухвального «Микро» микшер
+  считает тягу бортов: левый вал <code>L = газ + руль</code>, правый
+  <code>R = газ − руль</code> (с обрезкой до ±100) — лодка без руля
+  поворачивает разностью упоров винтов. Команды уходят не чаще 10 раз в
+  секунду; если джойстик не двигается, пульт всё равно шлёт «сердцебиение»
+  каждые 0,3 с — иначе через секунду тишины прошивка сработает по failsafe и
+  остановит моторы. Кнопка «СТОП» шлёт <code>S</code> немедленно, в обход
+  очереди.</p>
+  <p>Если лодка присылает телеметрию <code>V&lt;милливольты&gt;</code>,
+  индикатор показывает напряжение батареи и краснеет при разряде
+  (3,4 В на банку) — пора к берегу.</p>
+
+  <h2>Куда дальше</h2>
+  <div class="cards">
+    <a class="card" href="control">
+      <h3>Электроника и прошивка →</h3>
+      <p>Распайка, заливка скетчей, протокол и запасные пульты-приложения.</p>
+    </a>
+    <a class="card" href="trials">
+      <h3>Испытания →</h3>
+      <p>Первый выход на воду: программа испытаний и техника безопасности.</p>
+    </a>
+  </div>
+</main>
+<script src="assets/panel.js"></script>
+</body>
+</html>

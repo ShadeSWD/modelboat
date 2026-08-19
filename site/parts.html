@@ -1,0 +1,509 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Компоненты — электроника модели судна</title>
+<meta name="description" content="База компонентов радиоуправляемой модели судна: два готовых набора («Микро» и «Классика»), обоснование выбора каждой детали, схемы соединений, массы, токи и цены, аналоги и замены.">
+<link rel="stylesheet" href="assets/style.css">
+<style>
+table.el { width:100%; border-collapse:collapse; font:14px system-ui, sans-serif; margin:10px 0; }
+table.el th, table.el td { border-bottom:1px solid var(--line); padding:6px 8px; text-align:left; vertical-align:top; }
+table.el th { color:#3a3a42; font-weight:600; white-space:nowrap; }
+table.el td.num, table.el th.num { text-align:right; white-space:nowrap; }
+table.el tr.total td { font-weight:700; border-top:2px solid var(--line); }
+.why { background:#fff; border:1px solid var(--line); border-left:5px solid var(--accent);
+  border-radius:12px; padding:10px 16px; margin:12px 0; font:15px/1.5 system-ui, sans-serif; }
+.why b:first-child { color:var(--accent); }
+.kit2 { display:grid; grid-template-columns:repeat(auto-fit, minmax(340px, 1fr)); gap:16px; margin:14px 0; }
+.pinlbl { font:11px system-ui, sans-serif; fill:#3a3a42; }
+.boxlbl { font:600 13px system-ui, sans-serif; fill:#16161a; }
+.boxsub { font:11px system-ui, sans-serif; fill:#6b6b74; }
+.wire-p { stroke:#b3382e; stroke-width:1.8; fill:none; }
+.wire-g { stroke:#16161a; stroke-width:1.8; fill:none; }
+.wire-5 { stroke:#d97706; stroke-width:1.8; fill:none; }
+.wire-s { stroke:#2b4fa0; stroke-width:1.6; fill:none; }
+.jdot { fill:#16161a; }
+.cbox { fill:#fff; stroke:#16161a; stroke-width:1.6; }
+.rbox { fill:#fff; stroke:#3a3a42; stroke-width:1.3; }
+</style>
+</head>
+<body>
+<script src="assets/shell.js"></script>
+<script src="assets/site.js" data-root="./" data-page="parts"></script>
+<script src="assets/parts.js"></script>
+<main class="wrap">
+  <h1>Компоненты<br><span style="font-weight:400;font-size:.72em">что купить, почему именно это и как соединить</span></h1>
+  <p class="lead">Электронная часть модели собирается из самых ходовых и мелких
+  деталей с AliExpress и Ozon — без пульта, без паяльной экзотики и без единой
+  дорогой позиции. Управление — с телефона по Bluetooth LE. Ниже два готовых
+  набора под два типа корпуса, обоснование каждого выбора с проверкой токов по
+  закону Ома, схемы соединений и таблица замен. Все массы из этой базы
+  автоматически попадают в расчёт посадки на странице
+  <a href="designer">«Конструктор»</a>.</p>
+
+  <h2>Два готовых набора</h2>
+  <p>Оба набора говорят с телефоном на одном и том же
+  <a href="control">текстовом протоколе</a>, поэтому браузерный
+  <a href="panel">пульт</a> один на двоих.</p>
+  <div class="kit2" id="kit-cards"></div>
+
+  <h2>Почему выбрано именно это</h2>
+
+  <div class="why"><b>Bluetooth LE, а не HC-05.</b> Модуль HC-05 работает по
+  старому профилю Bluetooth Classic (SPP): его видят только Android-приложения,
+  iPhone такой профиль не поддерживает вовсе, а браузерный Web
+  Bluetooth-пульт — тем более. BLE-решения (ESP32-C3 со встроенным радио или
+  модуль HM-10) видны и Android, и iPhone (через приложения), и странице
+  <a href="panel">«Пульт в браузере»</a>. HC-05 оставлен в базе только как
+  дешёвая замена «исключительно для Android».</div>
+
+  <div class="why"><b>MX1508, а не L298N.</b> Классический L298N — биполярная
+  микросхема: на её ключах теряется до 2 В (из 3,7 В батареи «Микро» мотору
+  досталось бы меньше половины мощности), плата с радиатором весит ~26 г.
+  MX1508 построен на МОП-транзисторах: падение — десятые доли вольта, масса
+  2,5 г, два канала по 1,5 А (пик 2,5 А), цена около 60 ₽. Для младших
+  моторов это строго лучший выбор.</div>
+
+  <div class="why"><b>Мотор «Микро»: N20 6 В с редуктором 1:10 (~3000 об/мин),
+  а не «медленный» N20 и не coreless.</b> Гребной винт создаёт упор оборотами:
+  скорость хода примерно равна шагу винта, умноженному на обороты (см. расчёт
+  ниже). Ходовые «медленные» N20 (100–600 об/мин) рассчитаны на колёса роботов —
+  с винтом Ø30 мм они дадут 0,1–0,2 м/с, модель будет ползти. Коллекторные
+  coreless-моторы 716/816 — другая крайность: 30 000–40 000 об/мин без
+  редуктора, винт Ø30 мм их просто глушит до стопорного тока, вал 1 мм не
+  стыкуется с муфтами 2 мм. Золотая середина — высокооборотная версия N20
+  (редуктор 1:10, ~3000 об/мин при 6 В): от одной банки 18650 (~4 В) даёт
+  ~2000 об/мин на валу, металлический редуктор, вал 3 мм под ходовые муфты
+  3×2 мм.</div>
+
+  <div class="why"><b>Мотор «Классики»: класс 130, а не RS-360.</b> RS-360 —
+  мотор для катеров с бесколлекторной динамикой токов: 10–15 А под нагрузкой,
+  стопорный за 30 А. Ему нужны отдельный силовой регулятор, толстые провода и
+  батарея с высокой токоотдачей — весь бюджет и вес уходят в питание. Мотор
+  класса 130 (вал 2 мм) при нашем винте Ø35 мм потребляет около 1 А в ходу,
+  запускается от MX1508 с запараллеленными каналами и разгоняет корпус
+  450–600 мм до вполне «судовой» скорости. Проверка тока — ниже.</div>
+
+  <div class="why"><b>18650, а не батарейки АА и не LiPo.</b> Удельная энергия
+  Li-ion 18650 — около 200 Вт·ч/кг против 60–100 у щелочных и NiMH: при том же
+  времени хода экономится половина массы источника. В отличие от «голых»
+  LiPo-пакетов банка 18650 — в стальном корпусе, вставляется в холдер (замена
+  за секунду) и заряжается копеечной платой TP4056. Обязательное условие
+  безопасности: плата TP4056 берётся в версии <i>с защитой</i> (переразряд,
+  КЗ), а для батареи 2S «Классики» — банки со встроенной платой защиты и заряд
+  во внешнем зарядном устройстве: TP4056 умеет заряжать только один элемент.</div>
+
+  <div class="why"><b>ESP32-C3 SuperMini как «мозг» «Микро».</b> Одна плата
+  22,5×18 мм массой 3 г содержит и микроконтроллер, и Bluetooth LE, и
+  USB-разъём для прошивки — связка «Nano + HM-10» тяжелее, дороже и требует
+  делителя уровней. В «Классике» Nano оставлена сознательно: это учебная
+  классика Arduino, а пятивольтовая логика напрямую дружит с серво SG90.</div>
+
+  <h2>Проверим числа</h2>
+
+  <h3>Обороты винта и скорость хода</h3>
+  <p>Винт за один оборот «ввинчивается» в воду на свой шаг \(H\) за вычетом
+  скольжения \(s\) (для маленьких моделей \(s \approx 0{,}3\)). Скорость хода:</p>
+  $$ v = \frac{n}{60}\,H\,(1-s) $$
+  <p>Подстановка для N20 1:10 на одной банке 18650 (\(n \approx 2000\) об/мин,
+  винт Ø30 мм с шагом \(H \approx 0{,}03\) м):</p>
+  $$ v = \frac{2000}{60}\cdot 0{,}03\cdot 0{,}7 \approx 0{,}70\ \text{м/с} $$
+  <p>Результат: около 0,7 м/с — бодрый ход для корпуса 400 мм. Тот же расчёт
+  для «медленного» N20 на 300 об/мин даёт \(v \approx 0{,}10\) м/с — потому он
+  и не годится.</p>
+
+  <h3>Ток мотора «Классики» — закон Ома</h3>
+  <p>Худший случай — винт заклинило: ток ограничен только сопротивлением
+  обмотки \(R \approx 2{,}5\) Ом. Прошивка держит потолок ШИМ 70 %, поэтому
+  эффективное напряжение на моторе от батареи 8,4 В:</p>
+  $$ U = 0{,}7 \cdot 8{,}4 \approx 5{,}9\ \text{В}, \qquad
+     I_{\text{стоп}} = \frac{U}{R} = \frac{5{,}9}{2{,}5} \approx 2{,}4\ \text{А} $$
+  <p>Результат: 2,4 А &lt; 3 А — пиковая нагрузка укладывается в два
+  запараллеленных канала MX1508 (2×1,5 А длительно, 2×2,5 А пик). В обычном
+  ходу ток порядка 1 А. У «Микро» ещё спокойнее: стопорный ток N20 от банки
+  3,7–4,2 В — до ~1,5 А на канал, ровно паспортный предел канала.</p>
+
+  <h3>Ёмкость батареи и время хода</h3>
+  <p>Средний ходовой ток «Микро»: два N20 по ~0,25 А плюс ~0,05 А на
+  электронику. Время хода от банки 2600 мА·ч:</p>
+  $$ t = \frac{C}{I} = \frac{2{,}6}{2\cdot 0{,}25 + 0{,}05} =
+     \frac{2{,}6}{0{,}55} \approx 4{,}7\ \text{ч} $$
+  <p>Результат: даже с запасом на манёвры и ветер — больше трёх часов у воды.
+  «Классика» с ходовым током ~1,1 А от батареи 2×2600 мА·ч (последовательно —
+  ёмкость не складывается!) идёт \(t = 2{,}6/1{,}1 \approx 2{,}4\) ч.</p>
+
+  <h2>Схема соединений «Микро»</h2>
+  <div class="panel">
+  <svg viewBox="0 0 880 470" class="geo-board" role="img" aria-label="Схема соединений набора Микро">
+    <!-- батарея -->
+    <rect x="20" y="56" width="120" height="62" class="cbox" rx="6"/>
+    <text x="80" y="82" text-anchor="middle" class="boxlbl">18650</text>
+    <text x="80" y="98" text-anchor="middle" class="boxsub">3,7 В в холдере</text>
+    <!-- TP4056 -->
+    <rect x="210" y="48" width="130" height="80" class="cbox" rx="6"/>
+    <text x="275" y="92" text-anchor="middle" class="boxlbl">TP4056</text>
+    <text x="275" y="140" text-anchor="middle" class="boxsub">версия с защитой</text>
+    <text x="275" y="40" text-anchor="middle" class="boxsub">USB Type-C — заряд</text>
+    <text x="216" y="70" class="pinlbl">B+</text>
+    <text x="216" y="106" class="pinlbl">B−</text>
+    <text x="334" y="70" text-anchor="end" class="pinlbl">OUT+</text>
+    <text x="334" y="106" text-anchor="end" class="pinlbl">OUT−</text>
+    <!-- выключатель -->
+    <rect x="410" y="56" width="80" height="36" class="cbox" rx="6"/>
+    <text x="450" y="79" text-anchor="middle" class="boxsub">KCD11</text>
+    <text x="450" y="48" text-anchor="middle" class="boxsub">выключатель</text>
+    <!-- ESP32-C3 -->
+    <rect x="150" y="220" width="170" height="170" class="cbox" rx="8"/>
+    <text x="235" y="248" text-anchor="middle" class="boxlbl">ESP32-C3</text>
+    <text x="235" y="263" text-anchor="middle" class="boxsub">SuperMini</text>
+    <text x="313" y="249" text-anchor="end" class="pinlbl">5V</text>
+    <text x="313" y="274" text-anchor="end" class="pinlbl">GND</text>
+    <text x="313" y="304" text-anchor="end" class="pinlbl">GPIO4</text>
+    <text x="313" y="326" text-anchor="end" class="pinlbl">GPIO5</text>
+    <text x="313" y="348" text-anchor="end" class="pinlbl">GPIO6</text>
+    <text x="313" y="370" text-anchor="end" class="pinlbl">GPIO7</text>
+    <text x="157" y="304" class="pinlbl">GPIO3</text>
+    <text x="157" y="317" class="pinlbl">(АЦП)</text>
+    <!-- MX1508 -->
+    <rect x="520" y="220" width="150" height="170" class="cbox" rx="8"/>
+    <text x="595" y="212" text-anchor="middle" class="boxlbl">MX1508</text>
+    <text x="527" y="249" class="pinlbl">VCC</text>
+    <text x="527" y="274" class="pinlbl">GND</text>
+    <text x="527" y="304" class="pinlbl">IN1</text>
+    <text x="527" y="326" class="pinlbl">IN2</text>
+    <text x="527" y="348" class="pinlbl">IN3</text>
+    <text x="527" y="370" class="pinlbl">IN4</text>
+    <text x="663" y="277" text-anchor="end" class="pinlbl">A1</text>
+    <text x="663" y="306" text-anchor="end" class="pinlbl">A2</text>
+    <text x="663" y="341" text-anchor="end" class="pinlbl">B1</text>
+    <text x="663" y="370" text-anchor="end" class="pinlbl">B2</text>
+    <!-- моторы -->
+    <rect x="730" y="258" width="120" height="48" class="cbox" rx="6"/>
+    <text x="790" y="278" text-anchor="middle" class="boxlbl" style="font-size:12px">N20 левый</text>
+    <text x="790" y="296" text-anchor="middle" class="boxsub">1:10, 6 В</text>
+    <rect x="730" y="336" width="120" height="48" class="cbox" rx="6"/>
+    <text x="790" y="356" text-anchor="middle" class="boxlbl" style="font-size:12px">N20 правый</text>
+    <text x="790" y="374" text-anchor="middle" class="boxsub">1:10, 6 В</text>
+    <!-- плюсовая цепь -->
+    <path class="wire-p" d="M140 74 H210"/>
+    <path class="wire-p" d="M340 74 H410"/>
+    <path class="wire-p" d="M490 74 H505 V245 H520"/>
+    <path class="wire-p" d="M505 150 H350 V245 H320"/>
+    <circle cx="505" cy="150" r="3.2" class="jdot"/>
+    <circle cx="350" cy="150" r="3.2" class="jdot"/>
+    <text x="420" y="143" text-anchor="middle" class="pinlbl" style="fill:#b3382e">+БАТ после выключателя</text>
+    <!-- минусовая цепь -->
+    <path class="wire-g" d="M140 110 H210"/>
+    <path class="wire-g" d="M340 110 H370 V425"/>
+    <path class="wire-g" d="M320 270 H335 V425"/>
+    <path class="wire-g" d="M520 270 H495 V425"/>
+    <path class="wire-g" d="M100 425 H520"/>
+    <circle cx="370" cy="425" r="3.2" class="jdot"/>
+    <circle cx="335" cy="425" r="3.2" class="jdot"/>
+    <circle cx="495" cy="425" r="3.2" class="jdot"/>
+    <text x="300" y="447" text-anchor="middle" class="pinlbl">общий минус (GND)</text>
+    <!-- делитель напряжения -->
+    <path class="wire-p" d="M350 150 H120 V190"/>
+    <rect x="112" y="190" width="16" height="28" class="rbox"/>
+    <text x="134" y="208" class="pinlbl">100 кОм</text>
+    <path class="wire-s" d="M120 218 V300 H150"/>
+    <circle cx="120" cy="300" r="3.2" class="jdot"/>
+    <rect x="112" y="318" width="16" height="28" class="rbox"/>
+    <text x="134" y="336" class="pinlbl">100 кОм</text>
+    <path class="wire-g" d="M120 300 V318 M120 346 V425"/>
+    <circle cx="120" cy="425" r="3.2" class="jdot"/>
+    <!-- сигналы ШИМ -->
+    <path class="wire-s" d="M320 300 H520"/>
+    <path class="wire-s" d="M320 322 H520"/>
+    <path class="wire-s" d="M320 344 H520"/>
+    <path class="wire-s" d="M320 366 H520"/>
+    <text x="420" y="294" text-anchor="middle" class="pinlbl" style="fill:#2b4fa0">четыре линии ШИМ</text>
+    <!-- моторные провода -->
+    <path class="wire-g" d="M670 280 H700 V272 H730"/>
+    <path class="wire-g" d="M670 302 H700 V292 H730"/>
+    <path class="wire-g" d="M670 344 H700 V350 H730"/>
+    <path class="wire-g" d="M670 366 H700 V370 H730"/>
+  </svg>
+  <p class="caption">Набор «Микро»: банка 18650 через плату защиты TP4056 и
+  выключатель питает драйвер MX1508 и пин 5V платы ESP32-C3 (встроенный
+  стабилизатор платы работает от 3,5 В). Делитель 100 кОм / 100 кОм подаёт
+  половину напряжения батареи на АЦП GPIO3. Пересечение проводов без точки —
+  соединения нет.</p>
+  </div>
+
+  <h2>Схема соединений «Классика»</h2>
+  <div class="panel">
+  <svg viewBox="0 0 920 640" class="geo-board" role="img" aria-label="Схема соединений набора Классика">
+    <!-- батарея -->
+    <rect x="20" y="30" width="130" height="56" class="cbox" rx="6"/>
+    <text x="85" y="53" text-anchor="middle" class="boxlbl">2×18650</text>
+    <text x="85" y="70" text-anchor="middle" class="boxsub">7,4 В (6,0–8,4)</text>
+    <!-- выключатель -->
+    <rect x="200" y="32" width="84" height="28" class="cbox" rx="6"/>
+    <text x="242" y="51" text-anchor="middle" class="boxsub">KCD11</text>
+    <text x="242" y="24" text-anchor="middle" class="boxsub">выключатель</text>
+    <!-- шина +7,4 В -->
+    <path class="wire-p" d="M150 46 H200"/>
+    <path class="wire-p" d="M284 46 H320 V90"/>
+    <circle cx="320" cy="90" r="3.2" class="jdot"/>
+    <path class="wire-p" d="M120 90 H700"/>
+    <text x="640" y="82" text-anchor="middle" class="pinlbl" style="fill:#b3382e">шина +7,4 В (после выключателя)</text>
+    <!-- делитель к A0 -->
+    <circle cx="130" cy="90" r="3.2" class="jdot"/>
+    <path class="wire-p" d="M130 90 V120"/>
+    <rect x="122" y="120" width="16" height="28" class="rbox"/>
+    <text x="144" y="138" class="pinlbl">10 кОм</text>
+    <path class="wire-s" d="M130 148 V180 M130 180 H160 V360"/>
+    <circle cx="130" cy="180" r="3.2" class="jdot"/>
+    <rect x="122" y="200" width="16" height="28" class="rbox"/>
+    <text x="118" y="218" text-anchor="end" class="pinlbl">4,7 кОм</text>
+    <path class="wire-g" d="M130 180 V200 M130 228 H60 V600"/>
+    <circle cx="60" cy="600" r="3.2" class="jdot"/>
+    <!-- mini-360 -->
+    <rect x="170" y="150" width="170" height="80" class="cbox" rx="8"/>
+    <text x="245" y="182" text-anchor="middle" class="boxlbl">mini-360</text>
+    <text x="245" y="199" text-anchor="middle" class="boxsub">DC-DC: выставить 5,0 В</text>
+    <text x="205" y="164" text-anchor="middle" class="pinlbl">IN+</text>
+    <text x="334" y="179" text-anchor="end" class="pinlbl">OUT+</text>
+    <text x="300" y="248" text-anchor="end" class="pinlbl">GND (IN−/OUT−)</text>
+    <path class="wire-p" d="M200 150 V90"/>
+    <circle cx="200" cy="90" r="3.2" class="jdot"/>
+    <path class="wire-5" d="M340 175 H365 V300"/>
+    <path class="wire-g" d="M335 230 V255 H60"/>
+    <circle cx="60" cy="255" r="3.2" class="jdot"/>
+    <!-- шина 5 В -->
+    <path class="wire-5" d="M210 300 H630"/>
+    <circle cx="365" cy="300" r="3.2" class="jdot"/>
+    <text x="216" y="292" class="pinlbl" style="fill:#d97706">шина 5 В</text>
+    <!-- Nano -->
+    <rect x="100" y="360" width="180" height="200" class="cbox" rx="8"/>
+    <text x="190" y="395" text-anchor="middle" class="boxlbl">Arduino Nano</text>
+    <text x="163" y="376" text-anchor="middle" class="pinlbl">A0</text>
+    <text x="222" y="376" text-anchor="middle" class="pinlbl">5V</text>
+    <text x="190" y="554" text-anchor="middle" class="pinlbl">GND</text>
+    <text x="273" y="394" text-anchor="end" class="pinlbl">D5</text>
+    <text x="273" y="419" text-anchor="end" class="pinlbl">D6</text>
+    <text x="273" y="444" text-anchor="end" class="pinlbl">D9</text>
+    <text x="273" y="484" text-anchor="end" class="pinlbl">D10</text>
+    <text x="273" y="509" text-anchor="end" class="pinlbl">D11</text>
+    <path class="wire-5" d="M220 360 V300"/>
+    <circle cx="220" cy="300" r="3.2" class="jdot"/>
+    <path class="wire-g" d="M190 560 V600"/>
+    <circle cx="190" cy="600" r="3.2" class="jdot"/>
+    <!-- MX1508 -->
+    <rect x="620" y="150" width="160" height="130" class="cbox" rx="8"/>
+    <text x="700" y="180" text-anchor="middle" class="boxlbl">MX1508</text>
+    <text x="700" y="250" text-anchor="middle" class="boxsub">IN1+IN3, IN2+IN4,</text>
+    <text x="700" y="264" text-anchor="middle" class="boxsub">выходы попарно (A∥B)</text>
+    <text x="660" y="144" text-anchor="middle" class="pinlbl">VCC</text>
+    <text x="627" y="204" class="pinlbl">IN1</text>
+    <text x="627" y="234" class="pinlbl">IN2</text>
+    <text x="773" y="194" text-anchor="end" class="pinlbl">OUT</text>
+    <text x="773" y="224" text-anchor="end" class="pinlbl">OUT</text>
+    <text x="712" y="274" class="pinlbl">GND</text>
+    <path class="wire-p" d="M660 150 V90"/>
+    <circle cx="660" cy="90" r="3.2" class="jdot"/>
+    <path class="wire-g" d="M700 280 V600"/>
+    <circle cx="700" cy="600" r="3.2" class="jdot"/>
+    <!-- мотор -->
+    <rect x="830" y="165" width="80" height="80" class="cbox" rx="6"/>
+    <text x="870" y="200" text-anchor="middle" class="boxlbl" style="font-size:12px">мотор</text>
+    <text x="870" y="216" text-anchor="middle" class="boxlbl" style="font-size:12px">130</text>
+    <path class="wire-g" d="M780 190 H830"/>
+    <path class="wire-g" d="M780 220 H830"/>
+    <!-- сигналы D5/D6 к драйверу -->
+    <path class="wire-s" d="M280 390 H545 V200 H620"/>
+    <path class="wire-s" d="M280 415 H560 V230 H620"/>
+    <!-- серво -->
+    <rect x="560" y="440" width="130" height="90" class="cbox" rx="8"/>
+    <text x="625" y="497" text-anchor="middle" class="boxlbl" style="font-size:12.5px">серво SG90</text>
+    <text x="625" y="513" text-anchor="middle" class="boxsub">руль</text>
+    <text x="580" y="458" text-anchor="middle" class="pinlbl">SIG</text>
+    <text x="620" y="458" text-anchor="middle" class="pinlbl">5V</text>
+    <text x="662" y="524" text-anchor="middle" class="pinlbl">GND</text>
+    <path class="wire-s" d="M280 440 H293 V424 H580 V440"/>
+    <path class="wire-5" d="M620 300 V440"/>
+    <circle cx="620" cy="300" r="3.2" class="jdot"/>
+    <path class="wire-g" d="M662 530 V600"/>
+    <circle cx="662" cy="600" r="3.2" class="jdot"/>
+    <!-- HM-10 -->
+    <rect x="360" y="440" width="160" height="110" class="cbox" rx="8"/>
+    <text x="440" y="474" text-anchor="middle" class="boxlbl">HM-10</text>
+    <text x="440" y="490" text-anchor="middle" class="boxsub">BLE, FFE0/FFE1</text>
+    <text x="384" y="437" text-anchor="middle" class="pinlbl">VCC</text>
+    <text x="367" y="484" class="pinlbl">TXD</text>
+    <text x="367" y="509" class="pinlbl">RXD</text>
+    <text x="446" y="543" class="pinlbl">GND</text>
+    <path class="wire-5" d="M390 440 V300"/>
+    <circle cx="390" cy="300" r="3.2" class="jdot"/>
+    <path class="wire-g" d="M440 550 V600"/>
+    <circle cx="440" cy="600" r="3.2" class="jdot"/>
+    <!-- TXD -> D10 напрямую -->
+    <path class="wire-s" d="M280 480 H360"/>
+    <!-- D11 -> делитель 1к/2к -> RXD -->
+    <path class="wire-s" d="M280 505 H300"/>
+    <rect x="300" y="498" width="26" height="14" class="rbox"/>
+    <text x="313" y="493" text-anchor="middle" class="pinlbl">1 кОм</text>
+    <path class="wire-s" d="M326 505 H360"/>
+    <circle cx="336" cy="505" r="3.2" class="jdot"/>
+    <rect x="329" y="520" width="14" height="26" class="rbox"/>
+    <text x="326" y="536" text-anchor="end" class="pinlbl">2 кОм</text>
+    <path class="wire-g" d="M336 505 V520 M336 546 V600"/>
+    <circle cx="336" cy="600" r="3.2" class="jdot"/>
+    <!-- минус батареи и шина GND -->
+    <path class="wire-g" d="M40 86 V600"/>
+    <path class="wire-g" d="M40 600 H880"/>
+    <text x="770" y="618" text-anchor="middle" class="pinlbl">общий минус (GND)</text>
+  </svg>
+  <p class="caption">Набор «Классика»: батарея 2×18650 через выключатель
+  образует шину +7,4 В — от неё напрямую питается драйвер MX1508 (оба канала
+  в параллель на мотор 130) и через понижайку mini-360 — шина 5 В для Nano,
+  серво и HM-10. Вход RXD модуля HM-10 трёхвольтовый, поэтому сигнал с D11
+  подаётся через делитель 1 кОм / 2 кОм; TXD модуля на D10 идёт напрямую.
+  Делитель 10 кОм / 4,7 кОм ведёт напряжение батареи на A0. Пересечение
+  проводов без точки — соединения нет.</p>
+  </div>
+
+  <h2>База компонентов</h2>
+  <p>Полный справочник: габариты и массы — реальные, паспортные; цены —
+  ориентиры на маркетплейсах; в колонке «как искать» — готовый текст запроса.
+  Эти же данные использует <a href="designer">«Конструктор»</a> при расчёте
+  водоизмещения и центровки.</p>
+  <div id="parts-tables"></div>
+
+  <h2>Bluetooth: какой мост выбрать</h2>
+  <p>Все три решения рабочие: и связка Nano с модулем HM-10, и классический
+  HC-05, и ESP32-C3 со встроенным Bluetooth LE. Критерии разнонаправлены
+  (цена, масса, совместимость с телефонами), поэтому выбор — задача
+  многокритериального решения; таблица считается движком
+  <a href="https://shadeswd.duckdns.org/relmet/">Relation Metrics</a>,
+  веса можно двигать под свои приоритеты.</p>
+  <div class="relmet-choice">
+    <script type="application/json">{"title": "Bluetooth-мост между телефоном и моделью", "intro": "Цена — за плату (для связок — Nano + модуль вместе), масса — всей связки. «Совместимость» по шкале 1…5: 5 — работает браузерный пульт этого сайта на Android/Windows/macOS и iPhone через Bluefy; 2 — только Android-приложения (Classic SPP айфону недоступен).", "scale": "цена ₽, масса г, качественные 1…5", "criteria": [{"name": "Совместимость с телефонами", "w": 0.35, "dir": "max", "hint": "Web Bluetooth требует BLE; HC-05 — только Classic"}, {"name": "Цена решения", "unit": "₽", "w": 0.2, "dir": "min"}, {"name": "Масса", "unit": "г", "w": 0.2, "dir": "min", "hint": "идёт в ведомость нагрузки конструктора"}, {"name": "Простота сборки и прошивки", "w": 0.25, "dir": "max", "hint": "число плат и паек, делители уровня, настройка ядра"}], "alternatives": [{"id": "Arduino Nano + HM-10 (BLE)", "values": [5, 650, 11, 3]}, {"id": "Arduino Nano + HC-05 (Classic)", "values": [2, 500, 11, 3]}, {"id": "ESP32-C3 SuperMini (BLE на борту)", "values": [5, 250, 3, 4]}], "note": "Ансамбль методов единогласно выбирает ESP32-C3 — потому набор «Микро» и построен на нём. Набор «Классика» сознательно остаётся на Nano + HM-10: метод оптимизирует только то, что внесено в таблицу, а «учебная ценность классической Arduino» в ней не критерий — добавьте его со своим весом, если он вам важен."}</script>
+  </div>
+
+  <h2>Чем заменять</h2>
+  <table class="el">
+    <thead><tr><th>Деталь набора</th><th>Замена</th><th>Что учесть</th></tr></thead>
+    <tbody>
+      <tr><td>HM-10</td><td>AT-09, MLT-BT05, JDY-31-BLE</td>
+        <td>Клоны с тем же сервисом FFE0/FFE1 — работают без изменений в
+        прошивке и пульте. Проверить, что в описании указано BLE 4.0+, а не
+        «SPP».</td></tr>
+      <tr><td>HM-10</td><td>HC-05 / HC-06</td>
+        <td>Дешевле, но Bluetooth Classic: только Android-приложения, ни
+        iPhone, ни браузерный пульт работать не будут.</td></tr>
+      <tr><td>MX1508</td><td>DRV8833, TB6612FNG</td>
+        <td>Такие же двухканальные МОП-драйверы; TB6612 держит чуть больший
+        ток. L298N не брать: тяжёлый и теряет до 2 В.</td></tr>
+      <tr><td>N20 1:10</td><td>N20 1:5 (~6000 об/мин) или 1:30 (~1000 об/мин)</td>
+        <td>1:5 — быстрее, но шумнее и прожорливее; 1:30 — «масштабный» тихий
+        ход для водоизмещающих корпусов. Медленнее 1:30 не брать.</td></tr>
+      <tr><td>Мотор 130</td><td>Мотор 180; N20 1:10 (для корпусов до 500 мм)</td>
+        <td>180-й тянет винт Ø40 мм, ток выше — каналы MX1508 обязательно в
+        параллель. RS-360/380 — вне возможностей этого драйвера.</td></tr>
+      <tr><td>18650 + TP4056</td><td>LiPo 1S/2S с разъёмом XT30</td>
+        <td>Легче при той же ёмкости, но требует LiPo-зарядник и аккуратность:
+        пакет без стального корпуса боится проколов.</td></tr>
+      <tr><td>Arduino Nano + HM-10</td><td>ESP32-C3 SuperMini</td>
+        <td>Можно и в «Классике»: серво управляется с GPIO через ядро esp32,
+        уровень сигнала 3,3 В для SG90 обычно достаточен при питании серво от
+        5 В. Экономия ~350 ₽ и ~8 г.</td></tr>
+      <tr><td>Серво SG90</td><td>MG90S</td>
+        <td>Металлический редуктор, на 4 г тяжелее — для частых касаний дна и
+        травы у берега.</td></tr>
+      <tr><td>Винты Ø30/Ø35</td><td>3D-печать (PETG, 100 % заполнение)</td>
+        <td>Рабочий вариант для экспериментов с шагом; балансировать на игле,
+        иначе вибрация разбивает дейдвуд.</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Куда дальше</h2>
+  <div class="cards">
+    <a class="card demo" href="designer">
+      <h3>Конструктор →</h3>
+      <p>Массы выбранного набора уходят в расчёт водоизмещения, посадки и
+      остойчивости корпуса.</p>
+    </a>
+    <a class="card demo" href="control">
+      <h3>Электроника и прошивка →</h3>
+      <p>Пошаговая распайка обоих наборов, установка Arduino IDE, заливка
+      скетчей и протокол управления.</p>
+    </a>
+    <a class="card" href="panel">
+      <h3>Пульт в браузере →</h3>
+      <p>Виртуальный джойстик через Web Bluetooth — телефон становится
+      пультом без единого приложения.</p>
+    </a>
+  </div>
+</main>
+<script src="/relmet-choice.js" defer></script>
+<script>
+/* Рендер таблиц компонентов и карточек наборов из PARTS_DB (assets/parts.js). */
+'use strict';
+(function () {
+  const DB = window.PARTS_DB;
+  if (!DB) return;
+  const CATS = ['плата', 'привод', 'питание', 'механика', 'крепёж и расходники'];
+  const ru = (v, d) => v.toLocaleString('ru-RU', {
+    minimumFractionDigits: d || 0, maximumFractionDigits: d === undefined ? 1 : d });
+  const dims = (p) => (p.W === p.H ? 'Ø' + ru(p.W) + '×' + ru(p.L)
+    : ru(p.L) + '×' + ru(p.W) + '×' + ru(p.H));
+  const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;');
+
+  /* --- таблицы по категориям --- */
+  const host = document.getElementById('parts-tables');
+  let html = '';
+  for (const cat of CATS) {
+    const ids = Object.keys(DB.parts).filter((id) => DB.parts[id].cat === cat);
+    if (!ids.length) continue;
+    html += '<h3 style="text-transform:capitalize">' + esc(cat) + '</h3>' +
+      '<table class="el"><thead><tr><th>Компонент</th><th class="num">Габариты, мм</th>' +
+      '<th class="num">Масса, г</th><th>Питание</th><th class="num">Ток, А</th>' +
+      '<th class="num">Цена, ₽</th><th>Как искать</th><th>Примечание</th></tr></thead><tbody>';
+    for (const id of ids) {
+      const p = DB.parts[id];
+      html += '<tr><td><b>' + esc(p.name) + '</b></td>' +
+        '<td class="num">' + dims(p) + '</td>' +
+        '<td class="num">' + ru(p.mass) + '</td>' +
+        '<td>' + (p.volt ? esc(p.volt) : '—') + '</td>' +
+        '<td class="num">' + (p.amp != null ? ru(p.amp) : '—') + '</td>' +
+        '<td class="num">' + ru(p.price) + '</td>' +
+        '<td><code>' + esc(p.buy) + '</code></td>' +
+        '<td class="small">' + esc(p.note) + '</td></tr>';
+    }
+    html += '</tbody></table>';
+  }
+  host.innerHTML = html;
+
+  /* --- карточки наборов --- */
+  const cards = document.getElementById('kit-cards');
+  let out = '';
+  for (const key of Object.keys(DB.kits)) {
+    const kit = DB.kits[key];
+    let mass = 0, aboard = 0, price = 0;
+    let rows = '';
+    for (const it of kit.parts) {
+      const p = DB.parts[it.id];
+      const m = p.mass * it.qty, c = p.price * it.qty;
+      mass += m; price += c;
+      if (DB.consumables.indexOf(it.id) < 0) aboard += m;
+      rows += '<tr><td>' + esc(p.name) + '</td><td class="num">' + it.qty +
+        '</td><td class="num">' + ru(m) + '</td><td class="num">' + ru(c) + '</td></tr>';
+    }
+    out += '<div class="card demo"><h3>' + esc(kit.title) + '</h3>' +
+      '<p>' + esc(kit.desc) + '</p>' +
+      '<table class="el"><thead><tr><th>Деталь</th><th class="num">Шт.</th>' +
+      '<th class="num">г</th><th class="num">₽</th></tr></thead><tbody>' + rows +
+      '<tr class="total"><td>Итого покупок</td><td></td><td class="num">' + ru(mass) +
+      '</td><td class="num">' + ru(price, 0) + '</td></tr>' +
+      '<tr class="total"><td colspan="2">Масса на борту (без расходников)</td>' +
+      '<td class="num">' + ru(aboard) + '</td><td></td></tr>' +
+      '</tbody></table></div>';
+  }
+  cards.innerHTML = out;
+})();
+</script>
+</body>
+</html>

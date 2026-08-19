@@ -1,0 +1,14 @@
+# name обязателен: без него имя проекта берётся из каталога «deploy» и
+# конфликтует с другими компоузами на этом сервере (урок reduktor/relmet).
+name: modelboat
+
+services:
+  web:
+    image: nginx:alpine
+    container_name: modelboat-web
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8095:80"
+    volumes:
+      - ../site:/usr/share/nginx/html:ro
+      - ./nginx-default.conf:/etc/nginx/conf.d/default.conf:ro

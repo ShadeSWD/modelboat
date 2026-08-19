@@ -1,0 +1,17 @@
+# CI статического сайта: целостность HTML/ссылок/ассетов + синтаксис JS.
+# Один job на node-образе (нужен node для `node --check`) + python3/pytest.
+stages:
+  - test
+
+test:
+  stage: test
+  image: node:20-bookworm-slim
+  interruptible: true
+  before_script:
+    - apt-get update -qq && apt-get install -y -qq --no-install-recommends python3 python3-pytest >/dev/null
+    - python3 --version && node --version
+  script:
+    - python3 -m pytest tests/ -v
+  cache:
+    paths:
+      - .cache/pip
