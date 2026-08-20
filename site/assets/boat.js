@@ -53,7 +53,7 @@ const SLED = {
 const state = {
   proto: 'tug', L: 450, LB: 5.2, DB: 0.85,
   full: 1, transom: 1, bow: 1,
-  wall: 1.6, mat: 'pla', ballast: 220, ballastFx: 0.44,
+  wall: 1.6, mat: 'pla', ballast: 350, ballastFx: 0.48,
   pos: {},          // переопределённые пользователем x (доли L) по якорям
 };
 function kitOf() { return PROTOS[state.proto].shafts === 2 ? 'micro' : 'classic'; }
@@ -87,36 +87,138 @@ function compute() {
   const sledW = Math.max(...sledSlots.map(s => s.W)) + 7;
   const motorL = twin ? P.motor_n20.L : P.motor_130.L;
   const battL = (twin ? P.holder_1x18650.L : P.holder_2x18650.L) + 6;
-  // цепочка по умолчанию: серво/мотор → салазки → батарея → выключатель
-  const motorDefF = 0.24;
-  const sledDefF = (motorDefF * LM + motorL / 2 + 8 + sledLen / 2) / LM;
-  const battDefF = sledDefF + (sledLen / 2 + 10 + battL / 2) / LM;
-  const anchors = {
-    servoX: fx('servo_sg90', 0.115),
-    motorX: fx('motor_130', motorDefF) || fx('motor_n20', motorDefF),
-    sledX: fx('__sled', sledDefF),
-    battX: fx('holder', battDefF),
-    switchX: fx('switch_kcd', battDefF + (battL / 2 + 16) / LM),
-    wiresX: fx('wires', 0.33),
-    ballastX: state.ballastFx * L,
-    twinY: 0.20 * B * 1000,
-  };
-  for (const k in anchors) if (k !== 'twinY') anchors[k] *= 1000; // в мм
-  anchors.motorX = fx(twin ? 'motor_n20' : 'motor_130', motorDefF) * 1000;
-
   /* --- первый проход равновесия (грубо, для линии вала и пера) --- */
   const massRough = mShell + mFrames + sp.Adeck * wall * rhoP + mLacq + 0.35;
   const eq0 = equilibrium(hull, massRough, 0.47 * L, 0.4 * D);
-  /* винт — ЗА транцем (модельная схема: вал выходит через днище у транца,
-   * пересечений винта с корпусом нет по построению); мотор стоит на
-   * наклонном фундаменте так, что его ось лежит НА линии вала —
-   * стыковка с валом напрямую через муфту, без излома */
-  const Rp = dr.D / 2;
-  const xProp = -(Rp + 0.004);
-  const zProp = eq0.floats ? Math.max(Rp * 0.25 + 0.004, eq0.T - Rp - 0.003) : 0.012;
+  const T0 = eq0.floats ? eq0.T : 0.5 * D;
+
+  /* --- винт и руль ПОД корпусом (классическая схема) ---
+   * Винт стоит под кормовым подзором (у двухвального — под скулой на
+   * своей полуширине), перо руля — за винтом, баллер идёт сквозь подзор
+   * (гельмпорт). Чтобы винт никогда не резал обшивку, его диаметр
+   * ВПИСЫВАЕТСЯ в апертуру: верх диска на 1,5 мм ниже местной обшивки,
+   * низ — не глубже 15 % осадки под ОП (одновальный) или 50 % (двухвальный,
+   * как у прототипа Athena — винты на кронштейнах ниже днища). */
+  const bottomLocal = (xM, yM) => {
+    const st = hull.stations[Math.max(0, Math.min(hull.stations.length - 1,
+      Math.round(xM / L * (hull.stations.length - 1))))];
+    if (Math.abs(yM) < 1e-6) return st.pts[0].z;
+    for (let k = 0; k < st.pts.length; k++)
+      if (st.pts[k].y >= Math.abs(yM)) return st.pts[k].z;
+    return st.pts[0].z;
+  };
+  const twinYm = 0.13 * B; // двухвальному валы ближе к ДП — там глубже
+  const chordM = 0.062 * L;
+  const yPropM = twin ? twinYm : 0;
+  const dipLim = (twin ? 0.5 : 0.15) * T0;
+  let xPropV = (twin ? 0.05 : 0.075) * L, Rp = dr.D / 2;
+  for (let it = 0; it < 3; it++) { // диаметр и позиция сходятся за пару итераций
+    const bl = bottomLocal(xPropV, yPropM);
+    Rp = Math.max(0.008, Math.min(dr.D / 2, (bl - 0.0015 + dipLim) / 2));
+    if (!twin) { // перед пером руля должно остаться место до транца
+      const need = 0.008 + 0.35 * chordM + 0.002 + Rp;
+      if (xPropV < need) xPropV = need;
+    }
+  }
+  const xProp = xPropV;
+  const zProp = bottomLocal(xProp, yPropM) - 0.0015 - Rp;
+  const DpEff = 2 * Rp; // фактический диаметр винта, вписанный под корпус
+  const pitchEff = dr.pitch * DpEff / dr.D; // шаг покупного винта ~пропорционален
+
+  /* --- мотор: ось на линии вала, наклон не больше 15° (прямая муфта);
+   * если корпус короток и цепочка не помещается — мотор сдвигается
+   * к корме, наклон растёт и конструктор предупреждает про кардан --- */
   const AXISH = { classic: 24.4, micro: 7.0 };   // высота оси над площадкой фундамента, мм
-  const bottomAtMotorM = hullBotAt(hull, anchors.motorX / 1000) + wall;
-  const zMot = Math.max(bottomAtMotorM + 0.006 + AXISH[kit] / 1000, zProp + 0.006);
+  let motorDefF = twin ? 0.24 : 0.30;
+  const zMotAt = mF => Math.max(
+    bottomLocal(mF * L, yPropM) + wall + 0.006 + AXISH[kit] / 1000, zProp + 0.004);
+  for (let it = 0; it < 3; it++) {
+    const minX = xProp + (zMotAt(motorDefF) - zProp) / Math.tan(15 * Math.PI / 180);
+    motorDefF = Math.max(motorDefF, Math.min(0.5, minX / L));
+  }
+  const chain = mF => {
+    const bF = (mF * LM + motorL / 2 + 8 + battL / 2) / LM;
+    const sF = bF + (battL / 2 + 10 + sledLen / 2) / LM;
+    return { sF, bF, end: sF + (sledLen / 2 + 6) / LM };
+  };
+  const motorAngleMinF = motorDefF; // ниже — наклон вала превысит 15°
+  let ch = chain(motorDefF);
+  let tooShort = false;
+  if (ch.end > 0.93) { // корпус короток: мотор не трогаем (угол!), тесноту честно покажем
+    tooShort = true;
+    ch = chain(motorAngleMinF);
+  }
+  // салазкам нужно место по ширине: сдвигаем дефолт из узкого носа к миделю
+  const yInQuick = (xM, zM) => {
+    const st = hull.stations[Math.max(0, Math.min(hull.stations.length - 1,
+      Math.round(xM / L * (hull.stations.length - 1))))];
+    return yAt(st, zM) - wall;
+  };
+  // высота площадки для детали [halfW × len] в точке f·L (грубый аналог
+  // platformZ из fittings.js — для выбора дефолтных позиций)
+  const platformQuick = (f, halfM, lenM) => {
+    for (let z = 0.001; z < D; z += 0.001) {
+      let ok = true;
+      for (const xo of [-lenM / 2, 0, lenM / 2])
+        if (yInQuick(f * L + xo, z) < halfM + 0.002) { ok = false; break; }
+      if (ok) return z;
+    }
+    return D;
+  };
+  // серво: у кормы, но там, где помещается под палубой
+  let servoDefF = 0.115;
+  while (servoDefF < 0.5 &&
+    platformQuick(servoDefF, 0.020, 0.038) + 0.031 > D - 0.003) servoDefF += 0.02;
+  // батарея: как можно ближе к расчётному месту цепочки, но чтобы влезла
+  const battHalfM = ((twin ? P.holder_1x18650.W : P.holder_2x18650.W) + 6) / 2000 + 0.002;
+  const battHM = ((twin ? P.holder_1x18650.H : P.holder_2x18650.H) + P.batt_18650.H) / 1000;
+  let battDefF = Math.min(0.84, ch.bF);
+  while (battDefF > 0.35 &&
+    platformQuick(battDefF, battHalfM, battL / 1000 + 0.024) + 0.002 + battHM > D - 0.002)
+    battDefF -= 0.02;
+  // салазки с направляющими не должны вылезать за форштевень
+  const sledMaxF = (LM - (sledLen + 8) / 2 - 10) / LM;
+  let sledDefF = Math.min(0.86, sledMaxF, ch.sF);
+  const sledHalfM = (sledW / 2 + 10) / 1000;
+  // салазки ищут место, где помещаются и по ширине, и по высоте
+  // (корпус — железный приоритет; перекрытие с мотором лишь предупреждение)
+  const sledHmax = Math.max(...sledSlots.map(sl => sl.H)) / 1000;
+  const motorFm = (state.pos[twin ? 'motor_n20' : 'motor_130'] !== undefined
+    ? state.pos[twin ? 'motor_n20' : 'motor_130'] : motorDefF);
+  // поиск места салазок: сперва с обходом зоны мотора, если негде —
+  // без обхода (корпус — железный приоритет, перекрытие лишь предупреждение)
+  const sledScan = avoidMotor => {
+    for (let f = Math.min(0.86, sledMaxF, ch.sF); f > 0.24; f -= 0.02) {
+      if (avoidMotor && Math.abs(f * LM - motorFm * LM) < (motorL + sledLen) / 2 + 6) continue;
+      let ok = true;
+      for (const xo of [-sledLen / 2 - 4, 0, sledLen / 2 + 4])
+        if (yInQuick(f * L + xo / 1000, 0.62 * D) < sledHalfM) { ok = false; break; }
+      if (ok && platformQuick(f, sledHalfM, (sledLen + 8) / 1000) +
+        0.006 + sledHmax > D + 0.003) ok = false;
+      if (ok) return f;
+    }
+    return null;
+  };
+  sledDefF = sledScan(true);
+  if (sledDefF === null) sledDefF = sledScan(false);
+  if (sledDefF === null) sledDefF = Math.min(0.86, sledMaxF, ch.sF);
+  const anchors = {
+    servoX: fx('servo_sg90', servoDefF),
+    motorX: fx(twin ? 'motor_n20' : 'motor_130', motorDefF),
+    sledX: fx('__sled', sledDefF),
+    battX: fx('holder', battDefF),
+    switchX: fx('switch_kcd', (() => {
+      let f = Math.min(0.9, ch.end + 0.035);
+      while (f > 0.3 && yInQuick(f * L, D - 0.024) < (P.switch_kcd.W / 2 + 3) / 1000) f -= 0.02;
+      return f;
+    })()),
+    wiresX: fx('wires', 0.33),
+    ballastX: state.ballastFx * L,
+    twinY: twinYm * 1000,
+  };
+  for (const k in anchors) if (k !== 'twinY') anchors[k] *= 1000; // в мм
+
+  const zMot = zMotAt(anchors.motorX / 1000 / L);
   const shaftTiltDeg = Math.atan2(zMot - zProp, anchors.motorX / 1000 - xProp) * 180 / Math.PI;
   const shaftLine = [];
   for (let i = 0; i < (twin ? 2 : 1); i++) {
@@ -126,12 +228,16 @@ function compute() {
       y: twin ? (i === 0 ? 1 : -1) * anchors.twinY / 1000 : 0,
     });
   }
-  // перо руля навешено на транец за винтом
-  const rudder = PROTOS[state.proto].rudder ? {
-    x: (xProp - Rp * 1.15) * 1000 - 4, chord: Math.round(0.062 * LM),
-    span: Math.round((eq0.floats ? eq0.T : D / 2) * 0.8 * 1000), thick: 3,
-    zTop: (zProp + Rp) * 1000 + 5,
-  } : null;
+  // перо руля под подзором за винтом, верх у обшивки
+  const rudder = PROTOS[state.proto].rudder ? (() => {
+    const xR = xProp - Rp - 0.35 * chordM - 0.002;
+    const zTop = (bottomLocal(xR, 0) - 0.001) * 1000;
+    return {
+      x: xR * 1000, chord: Math.round(chordM * 1000),
+      span: Math.max(20, Math.round(zTop + 0.13 * T0 * 1000)), thick: 3,
+      zTop,
+    };
+  })() : null;
 
   /* --- палуба: кромка борта и люк над отсеком аппаратуры --- */
   const deckPts = [];
@@ -151,7 +257,7 @@ function compute() {
       ballast: state.ballast, ballastFx: state.ballastFx,
       anchors, sledSlots, sledW,
       shaftTiltDeg, motorZtop: (zMot - AXISH[kit] / 1000) * 1000,
-      rudder, prop: { D: dr.D * 1000, P: dr.pitch * 1000 },
+      rudder, prop: { D: Math.round(DpEff * 1000), P: Math.round(pitchEff * 1000) },
       shaftMM: shaftLine.map(s => ({
         x1: s.x1 * 1000, z1: s.z1 * 1000, x2: s.x2 * 1000, z2: s.z2 * 1000, y: s.y * 1000,
       })),
@@ -208,8 +314,17 @@ function compute() {
       cc.z = c.z; cc.shape = 'cyl'; cc.rotY = -shaftTiltDeg;
       cc.name = 'Муфта вала (стыкует мотор и вал напрямую)';
     }
-    // качалка руля — у транца под палубой (тяга идёт к серво)
-    addComp('rudder_gear', 12, 0, D * 1000 - P.rudder_gear.H - 6);
+    // качалка руля — у транца под самой палубой (баллер идёт снаружи через
+    // гельмпорт; внутри торчит только головка с качалкой — её и рисуем);
+    // в узкой корме сдвигается в нос, пока не поместится по ширине
+    let rgX = 22;
+    while (rgX < 80 && yInQuick(rgX / 1000, D - 0.020) < 0.013) rgX += 4;
+    addComp('rudder_gear', rgX, 0, D * 1000 - 20);
+    {
+      const rg = comps[comps.length - 1];
+      rg.Lmm = 20; rg.Wmm = 10; rg.Hmm = 14;
+      rg.z = (D * 1000 - 13) / 1000;
+    }
     // вал в массе есть, но в 3D его заменяет дейдвудная трубка по линии
     addComp('shaft_m2', onShaft(0.05).x * 1000, 0, onShaft(0.05).z * 1000);
     comps[comps.length - 1].draw = false;
@@ -242,7 +357,7 @@ function compute() {
       addComp('prop_30', s.x1 * 1000, s.y * 1000, s.z1 * 1000);
       comps[comps.length - 1].y = s.y;
       comps[comps.length - 1].draw = false;
-      const c = onShaft((motorL / 2 + 6) / 1000);
+      const c = onShaft((motorL / 2 + 2) / 1000);
       addComp('coupling', c.x * 1000, s.y * 1000, 0);
       const cc = comps[comps.length - 1];
       cc.y = s.y; cc.z = c.z; cc.shape = 'cyl'; cc.rotY = -shaftTiltDeg;
@@ -295,7 +410,7 @@ function compute() {
   const eq = equilibrium(hull, M, xg, zg);
   let speed = null, gz = null;
   if (eq.floats) {
-    speed = speedPredict(hull, eq, { D: dr.D, pitch: dr.pitch, rpm: dr.rpm, count: dr.count });
+    speed = speedPredict(hull, eq, { D: DpEff, pitch: pitchEff, rpm: dr.rpm, count: dr.count });
     gz = gzCurve(hull, M, zg, 60);
   }
 
@@ -303,8 +418,8 @@ function compute() {
     hull, L, B, D, wall, sp, kit, comps, rows, M, xg, zg, eq, speed, gz,
     mShell, mFrames, mDeck, mLacq, mComps, mBall, mFits,
     xBall: anchors.ballastX / 1000, zBall,
-    fits, fitsAboard, shaftLine, rudder, xProp, zProp, rhoP, kPrint,
-    anchors, sledLen, hatch, hasDeck,
+    fits, fitsAboard, shaftLine, rudder, xProp, zProp, DpEff, pitchEff, rhoP, kPrint,
+    anchors, sledLen, hatch, hasDeck, tooShort, shaftTiltDeg,
     morph: { full: state.full, transom: state.transom, bow: state.bow },
     Vfull: hullVolume(hull),
   };
@@ -332,8 +447,7 @@ function checks(r) {
   if (Math.abs(psi) > 2.5) add('bad', `Дифферент ${psi.toFixed(1)}° на ${psi > 0 ? 'нос' : 'корму'} — сместите грузы ${psi > 0 ? 'в корму' : 'в нос'}.`);
   else if (Math.abs(psi) > 1) add('warn', `Дифферент ${psi.toFixed(1)}° — заметен на глаз; подвиньте батарею ${psi > 0 ? 'в корму' : 'в нос'}.`);
   else add('ok', `Посадка почти на ровный киль (дифферент ${psi.toFixed(2)}°).`);
-  const dr = DRIVE[r.kit];
-  const propTop = r.zProp + dr.D / 2;
+  const propTop = r.zProp + r.DpEff / 2;
   if (propTop > r.eq.Ta) add('warn', 'Верх диска винта у поверхности — винт может подсасывать воздух. Увеличьте осадку (балласт) или уменьшите диаметр винта.');
   else add('ok', `Гребной винт погружен: ось на ${(1000 * (r.eq.Ta - r.zProp)).toFixed(0)} мм ниже кормовой ватерлинии.`);
   // компоненты в корпусе и не друг в друге
@@ -358,6 +472,19 @@ function checks(r) {
   else add('ok', 'Все компоненты умещаются под палубой и в обводах.');
   if (clash.length) add('warn', 'Компоненты пересекаются: ' + [...new Set(clash)].join('; ') + ' — растащите якоря по длине.');
   else add('ok', 'Пересечений между компонентами нет.');
+  // железная геометрическая проверка: вершины деталей против обшивки
+  if (r.clearance) {
+    if (r.clearance.length) {
+      add('bad', 'Пересечение с корпусом: ' + r.clearance.slice(0, 3)
+        .map(v => `${v.name.split('(')[0].trim()} (${v.where}${v.depth < 90 ? ', ' + v.depth.toFixed(1) + ' мм' : ''})`)
+        .join('; ') + (r.clearance.length > 3 ? ` и ещё ${r.clearance.length - 3}` : '') +
+        ' — подвиньте якоря или увеличьте размеры корпуса.');
+    } else {
+      add('ok', 'Железная проверка пройдена: ни одна вершина ни одной детали не выходит из корпуса.');
+    }
+  }
+  if (r.tooShort) add('bad', `Корпус короток для набора «${r.kit === 'classic' ? 'Классика' : 'Микро'}»: цепочка мотор→батарея→платы не помещается без перекрытий. Увеличьте длину (для «Классики» — от ~420 мм).`);
+  if (r.shaftTiltDeg > 16) add('warn', `Наклон линии вала ${r.shaftTiltDeg.toFixed(0)}° — прямая муфта не справится, нужен карданчик.`);
   const res = 100 * (r.Vfull / (r.M / RHO_W) - 1);
   add(res > 60 ? 'ok' : 'warn', `Запас плавучести ${res.toFixed(0)} % (объём по палубу против объёмного водоизмещения).`);
   if (r.L * 1000 > 256) add('info', `Корпус ${(r.L * 1000).toFixed(0)} мм длиннее стола большинства принтеров (250 мм) — печать двумя секциями со стыком по шпангоуту (см. «Печать и сборка»).`);
@@ -391,7 +518,7 @@ function drawSide(r) {
   }
   for (const sh of r.shaftLine) {
     out += `<line x1="${X(sh.x1)}" y1="${Z(sh.z1)}" x2="${X(sh.x2)}" y2="${Z(sh.z2)}" stroke="#6b6b74" stroke-width="2.5"/>`;
-    out += `<circle cx="${X(sh.x1)}" cy="${Z(sh.z1)}" r="${DRIVE[r.kit].D / 2 * s}" fill="none" stroke="#0e6b5e" stroke-width="2"/>`;
+    out += `<circle cx="${X(sh.x1)}" cy="${Z(sh.z1)}" r="${r.DpEff / 2 * s}" fill="none" stroke="#0e6b5e" stroke-width="2"/>`;
   }
   if (r.rudder) {
     const rx = X(r.rudder.x / 1000), rw = r.rudder.chord / 1000 * s, rh = r.rudder.span / 1000 * s;
@@ -553,8 +680,8 @@ function renderSteps(r) {
   if (r.speed) {
     const sp2 = r.speed, dr = DRIVE[r.kit];
     s += `<details><summary><b>5. Скорость (оценка)</b></summary>` +
-      stepRow('Винт', '', `${dr.count}×Ø${dr.D * 1000} мм, шаг ${dr.pitch * 1000} мм, ${dr.rpm} об/с (${dr.motor})`) +
-      stepRow('Шаговый угол лопасти на 0,7R', 'φ = arctg(P/2π·0,7R)', fmt(Math.atan(dr.pitch / (2 * Math.PI * 0.7 * dr.D / 2)) * 180 / Math.PI, 1) + '°') +
+      stepRow('Винт (вписан под подзор)', '', `${dr.count}×Ø${fmt(r.DpEff * 1000, 0)} мм, шаг ${fmt(r.pitchEff * 1000, 0)} мм, ${dr.rpm} об/с (${dr.motor}); покупать ближайший Ø`) +
+      stepRow('Шаговый угол лопасти на 0,7R', 'φ = arctg(P/2π·0,7R)', fmt(Math.atan(r.pitchEff / (2 * Math.PI * 0.7 * r.DpEff / 2)) * 180 / Math.PI, 1) + '°') +
       stepRow('Re = V·L<sub>ВЛ</sub>/ν', `${f(sp2.V)}·${f(h.Lwl)}/10⁻⁶`, fmtE(sp2.Re, 2)) +
       stepRow('C<sub>F</sub> (ИТТК-57)', '0,075/(lg Re − 2)²', fmtE(sp2.Cf, 2)) +
       stepRow('Fr = V/√(gL)', `${f(sp2.V)}/√(9,81·${f(h.Lwl)})`, f(sp2.Fn)) +
@@ -584,6 +711,7 @@ let cur = null;
 function refresh() {
   cur = compute();
   const r = cur;
+  r.clearance = clearanceViolations(r, assemblyParts(r, { noHull: true }));
   const cells = [
     ['Водоизмещение', fmt(r.M * 1000, 0) + ' г'],
     ['Осадка', r.eq.floats ? fmt(r.eq.T * 1000, 0) + ' мм' : '—'],
@@ -654,13 +782,55 @@ function attachDrag(side) {
   svg.addEventListener('pointerup', () => { target = null; });
 }
 
+/* ---------- железная проверка невыхода из корпуса ----------
+ * Каждая вершина каждой детали обязана лежать внутри внутренней
+ * поверхности корпуса (|y| ≤ y_внутр(x,z), z ≤ палубы, 0 ≤ x ≤ L)
+ * с допуском 1,2 мм. Исключения — детали, которым положено выходить:
+ * дейдвуд (сквозь днище), винт и перо руля (за транцем), палуба с
+ * крышкой (на планшире). Возвращает нарушителей с глубиной, мм. */
+const CLEAR_TOL = 1.2;
+const CLEAR_ALLOW = /Корпус|Дейдвуд|Гребной винт|Перо руля|Палуба|Крышка люка|Балласт:/;
+function clearanceViolations(r, parts) {
+  const L = r.L * 1000, D = r.D * 1000, wallMM = r.wall * 1000;
+  const sts = r.hull.stations;
+  const yIn = (xMM, zMM) => {
+    const st = sts[Math.max(0, Math.min(sts.length - 1,
+      Math.round(xMM / L * (sts.length - 1))))];
+    return yAt(st, zMM / 1000) * 1000 - wallMM;
+  };
+  const out = [];
+  for (const p of parts) {
+    if (CLEAR_ALLOW.test(p.name)) continue;
+    let worst = 0, where = '';
+    for (const t of p.tris) for (const v of t) {
+      if (v[0] < -CLEAR_TOL) { if (worst < 99) { worst = 99; where = 'за транцем'; } continue; }
+      if (v[0] > L + CLEAR_TOL) { if (worst < 99) { worst = 99; where = 'за форштевнем'; } continue; }
+      const inHatch = r.hatch && v[0] > r.hatch.x1 && v[0] < r.hatch.x2 &&
+        Math.abs(v[1]) < r.hatch.hw;
+      const zCap = inHatch ? D + 5 : D;
+      if (v[2] > zCap + CLEAR_TOL) {
+        if (v[2] - zCap > worst) { worst = v[2] - zCap; where = 'выше палубы'; }
+        continue;
+      }
+      const pen = Math.abs(v[1]) - yIn(v[0], Math.max(0, Math.min(v[2], D - 0.1)));
+      if (pen > worst) { worst = pen; where = 'сквозь обшивку'; }
+    }
+    if (worst > CLEAR_TOL) out.push({ name: p.name, depth: worst, where });
+  }
+  out.sort((a, b) => b.depth - a.depth);
+  return out;
+}
+
 /* ---------- сборка для 3D-вида и экспорта ---------- */
 function assemblyParts(r, opts) {
   const cut = opts && opts.cut;
-  const hullHi = makeHull(state.proto, { L: r.L, B: r.B, D: r.D }, r.morph, { nst: 121, nzc: 57 });
-  let hullTris = hullMesh(hullHi, r.wall);
-  if (cut) hullTris = hullTris.filter(t => (t[0][1] + t[1][1] + t[2][1]) / 3 < 1.5);
-  const parts = [{ name: 'Корпус', color: [0.62, 0.72, 0.78], tris: hullTris }];
+  const parts = [];
+  if (!(opts && opts.noHull)) {
+    const hullHi = makeHull(state.proto, { L: r.L, B: r.B, D: r.D }, r.morph, { nst: 121, nzc: 57 });
+    let hullTris = hullMesh(hullHi, r.wall);
+    if (cut) hullTris = hullTris.filter(t => (t[0][1] + t[1][1] + t[2][1]) / 3 < 1.5);
+    parts.push({ name: 'Корпус', color: [0.62, 0.72, 0.78], tris: hullTris });
+  }
   const colorOf = c => {
     if (/^(nano|esp32c3|hm10|hc05|mx1508|tp4056|buck)/.test(c.id)) return [0.19, 0.31, 0.63];
     if (/^motor/.test(c.id)) return [0.70, 0.22, 0.18];
@@ -703,8 +873,8 @@ function assemblyParts(r, opts) {
       tris: fMove(fRotY(fRing(0, 0, 6, 2.5, 0, len - 6, 14), ang), s.x1 * 1000, s.y * 1000, s.z1 * 1000),
     });
     parts.push({
-      name: `Гребной винт Ø${dr.D * 1000} мм, шаг ${dr.pitch * 1000} мм (за транцем)`, color: [0.75, 0.6, 0.2],
-      tris: fMove(propMesh(dr.D * 1000, dr.pitch * 1000, 3, 0.25 * dr.D * 1000, 7),
+      name: `Гребной винт Ø${(r.DpEff * 1000).toFixed(0)} мм, шаг ${(r.pitchEff * 1000).toFixed(0)} мм (под подзором)`, color: [0.75, 0.6, 0.2],
+      tris: fMove(propMesh(r.DpEff * 1000, r.pitchEff * 1000, 3, 0.25 * r.DpEff * 1000, 7),
         s.x1 * 1000, s.y * 1000, s.z1 * 1000),
     });
   }
@@ -780,8 +950,13 @@ function doExport(kind) {
   if (kind === 'csv') download(offsetsCsv(r.hull), nm + '-ординаты.csv');
 }
 
+/* экспорт для node-тестов (в браузере module нет) */
+if (typeof module !== 'undefined') {
+  module.exports = { compute, assemblyParts, clearanceViolations, checks, state, DRIVE, SLED };
+}
+
 /* ---------- запуск ---------- */
-window.addEventListener('DOMContentLoaded', () => {
+if (typeof window !== 'undefined') window.addEventListener('DOMContentLoaded', () => {
   try {
     const saved = JSON.parse(localStorage.getItem('modelboat-state') || 'null');
     if (saved && saved.proto) Object.assign(state, saved, { pos: saved.pos || {} });
@@ -794,7 +969,14 @@ window.addEventListener('DOMContentLoaded', () => {
     bind(id, key, true);
   }
   $('proto').value = state.proto;
-  $('proto').addEventListener('change', () => { state.proto = $('proto').value; state.pos = {}; refresh(); });
+  const PROTO_BALLAST = { tug: 350, launch: 150, cargo: 300 };
+  $('proto').addEventListener('change', () => {
+    state.proto = $('proto').value;
+    state.pos = {};
+    state.ballast = PROTO_BALLAST[state.proto] || 250;
+    if ($('ballast')) { $('ballast').value = state.ballast; const lb = $('ballast_v'); if (lb) lb.textContent = state.ballast; }
+    refresh();
+  });
   $('mat').value = state.mat;
   $('mat').addEventListener('change', () => { state.mat = $('mat').value; refresh(); });
   $('reset').addEventListener('click', () => { state.pos = {}; refresh(); });

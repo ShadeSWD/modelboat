@@ -386,15 +386,51 @@ function buildFittings(ctx) {
     Math.round(xMM / (L * 1000) * (hullStations.length - 1))))];
   // внутренняя полуширина (мм) на станции x на высоте z (мм от ОП)
   const yInAt = (xMM, zMM) => Math.max(0, yAt(stAt(xMM), zMM / 1000) * 1000 - wallMM);
-  // площадка: наименьшая высота, где помещается полуширина halfW
-  const platformZ = (xMM, halfW) => {
-    for (let z = 1; z < D * 1000; z += 0.5)
-      if (yInAt(xMM, z) >= halfW + 1) return z + 0.5;
-    return D * 1000 * 0.5;
+  // площадка: наименьшая высота, где полуширина halfW помещается ПО ВСЕЙ
+  // ДЛИНЕ детали (корпус сужается к оконечностям — центра станции мало)
+  const platformZ = (xMM, halfW, lenMM) => {
+    const half = (lenMM || 0) / 2;
+    let worst = 1;
+    for (let xo = -half; xo <= half + 0.1; xo += Math.max(3, half / 8 || 3)) {
+      let zHere = D * 1000 * 0.75;
+      for (let z = 1; z < D * 1000; z += 0.5)
+        if (yInAt(xMM + xo, z) >= halfW + 1.8) { zHere = z + 0.5; break; }
+      worst = Math.max(worst, zHere);
+    }
+    return worst;
   };
-  // подошва по обводам под площадку [halfW × len] на станции x
-  const soleFor = (xMM, halfW, len, zTop) =>
-    pedestal(z => yInAt(xMM, z), zTop, halfW, len);
+  // подошва: рёбра, каждое по обводам своей станции; профиль считается по
+  // ХУДШЕЙ из двух граней ребра (ребро толщиной 3 мм, корпус сужается)
+  const soleFor = (xMM, halfW, len, zTop) => {
+    const xs = len > 110 ? [-len / 2 + 4, 0, len / 2 - 4] : [-len / 2 + 3, len / 2 - 3];
+    let T = [], maxBot = 0;
+    for (const xo of xs) {
+      const yInR = zz => Math.min(yInAt(xMM + xo - 1.1, zz), yInAt(xMM + xo + 1.1, zz));
+      const NB = 15, bottom = [];
+      for (let i = 0; i <= NB; i++) {
+        const y = -halfW + i / NB * 2 * halfW;
+        let z = zTop - 0.5;
+        for (let zz = 0; zz <= zTop; zz += 0.5)
+          if (yInR(zz) >= Math.abs(y) + 0.3) { z = Math.min(zz, zTop - 0.5); break; }
+        bottom.push([y, z]);
+      }
+      maxBot = Math.max(maxBot, bottom[Math.floor(NB / 2)][1]);
+      const prof = bottom.concat([[halfW, zTop], [-halfW, zTop]]);
+      T = T.concat(fPrismX(prof, xo - 1.0, xo + 1.0));
+    }
+    // продольный стрингер по ДП: нижняя кромка — по худшему (самому
+    // высокому) дну вдоль всей длины, дно меняется от станции к станции
+    let strBot = maxBot;
+    for (let xo = -len / 2 + 2; xo <= len / 2 - 2; xo += 4) {
+      for (let zz = 0; zz <= zTop; zz += 0.5)
+        if (Math.min(yInAt(xMM + xo - 2, zz), yInAt(xMM + xo + 2, zz)) >= 3.4) {
+          strBot = Math.max(strBot, zz); break;
+        }
+    }
+    T = T.concat(fPrismX([[-2.2, Math.min(strBot, zTop - 0.5)], [2.2, Math.min(strBot, zTop - 0.5)],
+      [2.2, zTop], [-2.2, zTop]], -len / 2 + 2, len / 2 - 2));
+    return T;
+  };
   // низ подошвы — примерно линия киля станции + стенка
   const keelZ = xMM => stAt(xMM).pts[0].z * 1000 + wallMM;
 
@@ -402,7 +438,7 @@ function buildFittings(ctx) {
    * строятся от нуля своей площадки, подошва уходит вниз до обводов);
    * zTopOverride задаёт высоту площадки принудительно (мотор на линии вала) */
   const grounded = (id, name, nodeTris, xMM, yMM, halfW, len, note, extra, zTopOverride) => {
-    const zTop = Math.max(zTopOverride || 0, platformZ(xMM, halfW + Math.abs(yMM)));
+    const zTop = Math.max(zTopOverride || 0, platformZ(xMM, halfW + Math.abs(yMM), len));
     const sole = soleFor(xMM, Math.abs(yMM) + halfW, len, zTop);
     // подошва строится в координатах корпуса по y — сместим в локальные
     const tris = nodeTris.concat(fMove(sole, 0, -yMM, -zTop));
@@ -428,7 +464,7 @@ function buildFittings(ctx) {
     T = trayPocket(32, 16, 12, []).concat(
       fRing(-13.9, 0, 0.5, 3, 1.0, 13.5, 18), fRing(13.9, 0, 0.5, 3, 1.0, 13.5, 18));
     grounded('fit_servo', 'Кронштейн серво SG90 (бобышки под штатные винты)',
-      T, ctx.anchors.servoX, 0, 18, 18,
+      T, ctx.anchors.servoX, 0, 18, 38,
       'серво в кармане, фланец винтами в бобышки', { seat: 2 });
     // кроватка батареи
     const bw = (parts.holder_2x18650 && parts.holder_2x18650.W) || 41;
@@ -438,7 +474,7 @@ function buildFittings(ctx) {
       lug(-(bl + 6) / 2, 0, -(bl + 6) / 2 - 5, 0, 3),
       lug((bl + 6) / 2, 0, (bl + 6) / 2 + 5, 0, 3));
     grounded('fit_batt', 'Кроватка батареи 2×18650 (стяжки, 2 ушка)',
-      T, ctx.anchors.battX, 0, (bw + 6) / 2 + 2, bl + 8,
+      T, ctx.anchors.battX, 0, (bw + 6) / 2 + 2, bl + 24,
       'батарея — самый тяжёлый груз: кроватка на подошве + две стяжки', { seat: 2 });
   } else {
     const nw = (parts.motor_n20 && parts.motor_n20.W) || 12;
@@ -470,11 +506,11 @@ function buildFittings(ctx) {
   add('fit_sled', 'Салазки плат (карманы: ' +
     ctx.sledSlots.map(s => s.short || s.id).join(', ') + ')', sr.sled, {
     x: ctx.anchors.sledX, y: 0,
-    z: platformZ(ctx.anchors.sledX, sr.sledW / 2 + 6) + sr.railSeat + 2,
+    z: platformZ(ctx.anchors.sledX, sr.sledW / 2 + 8, sr.sledLen + 8) + sr.railSeat + 2,
   }, 'платы в карманах на двустороннем скотче; салазки выдвигаются из направляющих',
     { seat: 2, offsets: sr.offsets, sledLen: sr.sledLen });
   {
-    const zr = platformZ(ctx.anchors.sledX, sr.sledW / 2 + 8);
+    const zr = platformZ(ctx.anchors.sledX, sr.sledW / 2 + 8, sr.sledLen + 8);
     const railLen = sr.sledLen + 8;
     const soleL = soleFor(ctx.anchors.sledX, sr.sledW / 2 + 8, railLen, zr);
     add('fit_rail_l', 'Направляющая салазок, левая (на подошве)',
@@ -506,14 +542,18 @@ function buildFittings(ctx) {
       'копия штатного винта: 3 лопасти, шаговый угол arctg(P/2πr); печатать лёжа с поддержками, покупной надёжнее');
   }
 
-  // карман балласта на подошве + крышка
+  // карман балласта на подошве + крышка; высота ограничена палубой —
+  // если засыпка не помещается, карман делается максимальным (конструктор
+  // отдельно предупредит про запас плавучести/остойчивость)
   const need = Math.max(20, ctx.ballast || 0) / 6 * 1.3;
   const ballW = 20, ballL = Math.max(40, Math.min(0.25 * L * 1000, 90));
-  const ballH = Math.max(8, Math.ceil(need * 1000 / (ballW * ballL)) + 2);
+  const zBallEst = platformZ(ctx.anchors.ballastX, (ballW + 4) / 2 + 2, ballL + 24);
+  const ballH = Math.min(Math.max(6, D * 1000 - zBallEst - 12),
+    Math.max(8, Math.ceil(need * 1000 / (ballW * ballL)) + 2));
   let T = trayPocket(ballL, ballW + 4, ballH, [0]).concat(
     lug(-ballL / 2, 0, -ballL / 2 - 5, 0, 3), lug(ballL / 2, 0, ballL / 2 + 5, 0, 3));
   grounded('fit_ballast', `Карман балласта (${ctx.ballast || 0} г дроби или гаек М8)`,
-    T, ctx.anchors.ballastX, 0, (ballW + 4) / 2 + 2, ballL + 8,
+    T, ctx.anchors.ballastX, 0, (ballW + 4) / 2 + 2, ballL + 24,
     'клеится на киль до герметизации; засыпка проливается эпоксидкой', { ballH, ballL, ballW });
   T = fBox(0, 0, 0.8, ballL + 5, ballW + 9, 1.6)
     .concat(fBox(-ballL / 2 + 4, 0, 2.6, 4, ballW - 2, 2), fBox(ballL / 2 - 4, 0, 2.6, 4, ballW - 2, 2));
@@ -522,12 +562,17 @@ function buildFittings(ctx) {
     { x: ctx.anchors.ballastX, y: 0, z: (bz ? bz.place.z : 10) + ballH },
     'кладётся после засыпки, по периметру эпоксидка');
 
-  // опоры дейдвудной трубки на подошвах
+  // опоры дейдвудной трубки на подошвах; в тесной корме, где опора не
+  // помещается по ширине, она пропускается — там трубку держит эпоксидная
+  // галтель самого выхода через обшивку
   (ctx.shaftMM || []).forEach((s, si) => {
     [['a', 0.45], ['b', 0.8]].forEach(([tag, tf]) => {
       const x = s.x1 + (s.x2 - s.x1) * tf, z = s.z1 + (s.z2 - s.z1) * tf;
       const dv = vCradle(5, 12, 1);
       const zTop = Math.max(keelZ(x) + 1, z - dv.axisZ);
+      const needHalf = Math.abs(s.y) + dv.w / 2 + 1.5;
+      for (const xo of [-7, 0, 7]) for (const zo of [0, dv.h / 2, dv.h])
+        if (yInAt(x + xo, zTop + zo) < needHalf) return;
       const sole = soleFor(x, Math.abs(s.y) + dv.w / 2, 14, zTop);
       add('fit_dw' + (si + 1) + tag,
         `Опора дейдвудной трубки ${si + 1}-го вала (${tag === 'a' ? 'кормовая' : 'носовая'})`,
