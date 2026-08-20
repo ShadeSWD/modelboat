@@ -501,15 +501,91 @@ function buildFittings(ctx) {
       'фиксация стяжкой, выводы к выключателю', { seat: 2 });
   }
 
-  // салазки с платами + направляющие на подошвах
-  const sr = sledAndRails(ctx.sledSlots, ctx.sledW);
-  add('fit_sled', 'Салазки плат (карманы: ' +
-    ctx.sledSlots.map(s => s.short || s.id).join(', ') + ')', sr.sled, {
-    x: ctx.anchors.sledX, y: 0,
-    z: platformZ(ctx.anchors.sledX, sr.sledW / 2 + 8, sr.sledLen + 8) + sr.railSeat + 2,
-  }, 'платы в карманах на двустороннем скотче; салазки выдвигаются из направляющих',
-    { seat: 2, offsets: sr.offsets, sledLen: sr.sledLen });
-  {
+  if (ctx.shelf) {
+    /* --- двухэтажная полка над батарейным отсеком ---
+     * Когда салазкам нет свободного окна по длине, платы поднимаются на
+     * второй ярус: плита с карманами лежит на двух продольных
+     * стойках-переборках по бокам батареи. Нижняя кромка стоек повторяет
+     * обводы днища (клеится эпоксидкой с галтелью), сверху у стоек
+     * фланцы с бобышками — полка притягивается четырьмя винтами М2. */
+    const sh = ctx.shelf;                 // {legY, battH, maxH}; низ полки — над батареей
+    let shelfTight = false;
+    {
+      const fb2s = out.find(f => f.id === 'fit_batt');
+      const battTop = (fb2s ? fb2s.place.z + 2 + sh.battH : 40);
+      // платы обязаны остаться под палубой: если по высоте не помещается —
+      // полка прижимается вниз (в батарею упрётся стяжками) и ставится
+      // честный флаг тесноты
+      const zByDeck = D * 1000 - Math.max((sh.maxH || 8) + 2, 9.6) - 1.2;
+      sh.z = Math.min(battTop + 3, zByDeck);
+      if (sh.z < battTop + 2) shelfTight = true; // корпус важнее: полку не поднимаем
+    }
+    const slots = ctx.sledSlots;
+    const t = 2.4, gap = 5;
+    const lenP = slots.reduce((s2, sl) => s2 + sl.L + gap, gap) + 2 * t;
+    // плита уже колеи бобышек: ушки выходят за кромку, отверстия открыты
+    const shW = 2 * (sh.legY - 6);
+    // плита с карманами (как салазки, но шире — на всю колею стоек)
+    let plate = trayPocket(lenP, shW, 7, []);
+    let cx2 = -lenP / 2 + t + gap / 2;
+    const offsets = [];
+    for (let i = 0; i < slots.length; i++) {
+      cx2 += slots[i].L / 2;
+      offsets.push(cx2);
+      cx2 += slots[i].L / 2 + gap;
+      if (i < slots.length - 1)
+        plate = plate.concat(fBox(cx2 - gap / 2, 0, 1.7 + 3.5 + 0.3, t, shW - 2 * t - 0.3, 7.6));
+    }
+    // пролёт стоек: обрезается там, где корпус уже колеи (полка может
+    // нависать краями — стойки обязаны стоять в полной ширине)
+    const yInRq = (xq, zz) => Math.min(yInAt(xq - 1.4, zz), yInAt(xq + 1.4, zz));
+    let xLegL = ctx.anchors.sledX - lenP / 2, xLegR = ctx.anchors.sledX + lenP / 2;
+    while (xLegR - ctx.anchors.sledX > 24 && yInRq(xLegR, sh.z) < sh.legY + 2.6) xLegR -= 3;
+    while (ctx.anchors.sledX - xLegL > 24 && yInRq(xLegL, sh.z) < sh.legY + 2.6) xLegL += 3;
+    sh.xLegL = xLegL; sh.xLegR = xLegR;
+    // ушки по углам плиты — над бобышками стоек (в пределах пролёта)
+    const bxS = [xLegL + 8 - ctx.anchors.sledX, xLegR - 8 - ctx.anchors.sledX];
+    for (const bx2 of bxS) for (const sgn of [1, -1])
+      plate = plate.concat(lug(bx2, sgn * shW / 2, bx2, sgn * (sh.legY - 3), 2));
+    add('fit_shelf', 'Полка плат второго яруса (карманы: ' +
+      slots.map(s2 => s2.short || s2.id).join(', ') + ')', plate, {
+      x: ctx.anchors.sledX, y: 0, z: sh.z,
+    }, 'полка лежит над батареей на двух стойках, притянута 4 винтами М2 — батарея вынимается после снятия полки',
+      { seat: 2, offsets, sledLen: lenP, shelfTight });
+    // стойки: продольные переборки по бортам батареи, низ по обводам,
+    // длина — в пределах пролёта xLegL..xLegR
+    const legLen = xLegR - xLegL, legCx = (xLegL + xLegR) / 2 - ctx.anchors.sledX;
+    for (const sgn of [1, -1]) {
+      const yLeg = sgn * sh.legY;
+      const prof = [];
+      const NB2 = 30;
+      for (let i = 0; i <= NB2; i++) {   // нижняя кромка слева направо
+        const xq = xLegL + i / NB2 * legLen;
+        let zb = sh.z - 1;
+        for (let zz = 0; zz <= sh.z; zz += 0.5)
+          if (yInRq(xq, zz) >= Math.abs(yLeg) + 1.2 + 0.3) { zb = Math.min(zz + 0.6, sh.z - 1); break; }
+        prof.push([xq - ctx.anchors.sledX, zb]);
+      }
+      prof.push([legCx + legLen / 2, sh.z], [legCx - legLen / 2, sh.z]); // верхняя кромка
+      let leg = fPrismY(prof, yLeg - 1.2, yLeg + 1.2);
+      // верхний фланец внутрь + бобышки под винты полки
+      leg = leg.concat(fBox(legCx, yLeg - sgn * 4, sh.z - 1.2, legLen, 8, 2.4));
+      for (const bx2 of bxS)
+        leg = leg.concat(fRing(bx2, sgn * (sh.legY - 3), sh.z - 9, 3, 1.0, 9, 16));
+      add(sgn > 0 ? 'fit_shelf_leg_r' : 'fit_shelf_leg_l',
+        `Стойка полки, ${sgn > 0 ? 'правый' : 'левый'} борт (низ по обводам)`,
+        fMove(leg, 0, 0, -sh.z), { x: ctx.anchors.sledX, y: 0, z: sh.z },
+        'клеится к днищу эпоксидной галтелью вдоль нижней кромки; сверху фланец с бобышками');
+    }
+  } else {
+    // салазки с платами + направляющие на подошвах
+    const sr = sledAndRails(ctx.sledSlots, ctx.sledW);
+    add('fit_sled', 'Салазки плат (карманы: ' +
+      ctx.sledSlots.map(s => s.short || s.id).join(', ') + ')', sr.sled, {
+      x: ctx.anchors.sledX, y: 0,
+      z: platformZ(ctx.anchors.sledX, sr.sledW / 2 + 8, sr.sledLen + 8) + sr.railSeat + 2,
+    }, 'платы в карманах на двустороннем скотче; салазки выдвигаются из направляющих',
+      { seat: 2, offsets: sr.offsets, sledLen: sr.sledLen });
     const zr = platformZ(ctx.anchors.sledX, sr.sledW / 2 + 8, sr.sledLen + 8);
     const railLen = sr.sledLen + 8;
     const soleL = soleFor(ctx.anchors.sledX, sr.sledW / 2 + 8, railLen, zr);

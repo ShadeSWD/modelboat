@@ -200,12 +200,15 @@ function compute() {
     return null;
   };
   sledDefF = sledScan(true);
-  if (sledDefF === null) sledDefF = sledScan(false);
-  if (sledDefF === null) sledDefF = Math.min(0.86, sledMaxF, ch.sF);
+  let shelfMode = false;
+  if (sledDefF === null) { // окна для салазок нет — платы на второй ярус над батареей
+    shelfMode = true;
+    sledDefF = null; // якорь полки привяжется к батарее ниже
+  }
   const anchors = {
     servoX: fx('servo_sg90', servoDefF),
     motorX: fx(twin ? 'motor_n20' : 'motor_130', motorDefF),
-    sledX: fx('__sled', sledDefF),
+    sledX: shelfMode ? fx('__sled', battDefF) : fx('__sled', sledDefF),
     battX: fx('holder', battDefF),
     switchX: fx('switch_kcd', (() => {
       let f = Math.min(0.9, ch.end + 0.035);
@@ -256,6 +259,11 @@ function compute() {
       kit, parts: P, hullStations: hull.stations, L, B, D, wall,
       ballast: state.ballast, ballastFx: state.ballastFx,
       anchors, sledSlots, sledW,
+      shelf: shelfMode ? {
+        legY: ((twin ? P.holder_1x18650.W : P.holder_2x18650.W)) / 2 + 6,
+        battH: (twin ? P.holder_1x18650.H : P.holder_2x18650.H) + P.batt_18650.H,
+        maxH: Math.max(...sledSlots.map(sl => sl.H)),
+      } : null,
       shaftTiltDeg, motorZtop: (zMot - AXISH[kit] / 1000) * 1000,
       rudder, prop: { D: Math.round(DpEff * 1000), P: Math.round(pitchEff * 1000) },
       shaftMM: shaftLine.map(s => ({
@@ -365,7 +373,7 @@ function compute() {
     }
   }
   // платы в карманах салазок
-  const sled = fitById('fit_sled');
+  const sled = fitById('fit_sled') || fitById('fit_shelf');
   if (sled) {
     sledSlots.forEach((sl, i) => {
       addComp(sl.id, anchors.sledX + sled.offsets[i], 0, sled.place.z + (sled.seat || 2));
@@ -386,6 +394,10 @@ function compute() {
   const zBall = ((fb2 ? fb2.place.z : 10) + (fb2 && fb2.ballH ? fb2.ballH / 2 : 5)) / 1000;
 
   /* --- нагрузка масс --- */
+  if (shelfMode) {
+    const shf = fitById('fit_shelf');
+    tooShort = !!(shf && shf.shelfTight);
+  }
   const fitsAboard = fits.filter(f => f.place);
   const mFits = fitsAboard.reduce((s, f) => s + f.mass, 0) / 1000;
   const hasDeck = !!fitById('fit_deck');
@@ -419,7 +431,7 @@ function compute() {
     mShell, mFrames, mDeck, mLacq, mComps, mBall, mFits,
     xBall: anchors.ballastX / 1000, zBall,
     fits, fitsAboard, shaftLine, rudder, xProp, zProp, DpEff, pitchEff, rhoP, kPrint,
-    anchors, sledLen, hatch, hasDeck, tooShort, shaftTiltDeg,
+    anchors, sledLen, hatch, hasDeck, tooShort, shaftTiltDeg, shelfMode,
     morph: { full: state.full, transom: state.transom, bow: state.bow },
     Vfull: hullVolume(hull),
   };
@@ -969,7 +981,7 @@ if (typeof window !== 'undefined') window.addEventListener('DOMContentLoaded', (
     bind(id, key, true);
   }
   $('proto').value = state.proto;
-  const PROTO_BALLAST = { tug: 350, launch: 150, cargo: 300 };
+  const PROTO_BALLAST = { tug: 350, launch: 150, cargo: 350 };
   $('proto').addEventListener('change', () => {
     state.proto = $('proto').value;
     state.pos = {};
