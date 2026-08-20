@@ -15,7 +15,9 @@ function viewer3d(canvas) {
     void main(){ gl_Position = uM * vec4(aP,1.0); vN = mat3(uR) * aN; vC = aC; }`;
   const fs = `precision mediump float;
     varying vec3 vN; varying vec3 vC;
+    uniform float uPickMode; uniform vec3 uPickColor;
     void main(){
+      if (uPickMode > 0.5) { gl_FragColor = vec4(uPickColor, 1.0); return; }
       vec3 n = normalize(vN);
       float d = abs(dot(n, normalize(vec3(0.45, 0.6, 0.8))));
       float d2 = abs(dot(n, normalize(vec3(-0.6, -0.2, 0.4))));
@@ -34,11 +36,14 @@ function viewer3d(canvas) {
   const aP = gl.getAttribLocation(prog, 'aP'), aN = gl.getAttribLocation(prog, 'aN'),
     aC = gl.getAttribLocation(prog, 'aC');
   const uM = gl.getUniformLocation(prog, 'uM'), uR = gl.getUniformLocation(prog, 'uR');
+  const uPickMode = gl.getUniformLocation(prog, 'uPickMode'),
+    uPickColor = gl.getUniformLocation(prog, 'uPickColor');
   gl.enable(gl.DEPTH_TEST);
   gl.disable(gl.CULL_FACE); // открытая палуба: видны обе стороны стенки
 
   let buf = null, nVerts = 0, center = [0, 0, 0], radius = 100;
   let yaw = 2.7, pitch = -0.7, zoom = 1.5;
+  let ranges = [], pickCb = null;
 
   function setParts(parts) {
     let n = 0;
@@ -46,7 +51,9 @@ function viewer3d(canvas) {
     const arr = new Float32Array(n * 9);
     let o = 0;
     let mn = [1e9, 1e9, 1e9], mx = [-1e9, -1e9, -1e9];
+    ranges = [];
     for (const part of parts) {
+      ranges.push({ start: o / 9, count: part.tris.length * 3, name: part.name });
       const c = part.color || [0.5, 0.5, 0.5];
       for (const t of part.tris) {
         const [A, B, C] = t;
@@ -124,17 +131,42 @@ function viewer3d(canvas) {
     gl.enableVertexAttribArray(aP); gl.vertexAttribPointer(aP, 3, gl.FLOAT, false, 36, 0);
     gl.enableVertexAttribArray(aN); gl.vertexAttribPointer(aN, 3, gl.FLOAT, false, 36, 12);
     gl.enableVertexAttribArray(aC); gl.vertexAttribPointer(aC, 3, gl.FLOAT, false, 36, 24);
+    gl.uniform1f(uPickMode, 0);
     gl.drawArrays(gl.TRIANGLES, 0, nVerts);
   }
 
+  /* определение детали под курсором: каждая группа рисуется своим
+   * плоским цветом-номером, пиксель читается обратно */
+  function pickAt(clientX, clientY) {
+    if (!nVerts) return -1;
+    const rect = canvas.getBoundingClientRect();
+    const dpr = canvas.width / rect.width;
+    const px = Math.round((clientX - rect.left) * dpr);
+    const py = Math.round((rect.bottom - clientY) * dpr);
+    gl.clearColor(1, 1, 1, 1);
+    gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+    gl.uniform1f(uPickMode, 1);
+    for (let i = 0; i < ranges.length; i++) {
+      gl.uniform3f(uPickColor, ((i + 1) & 255) / 255, (((i + 1) >> 8) & 255) / 255, 0);
+      gl.drawArrays(gl.TRIANGLES, ranges[i].start, ranges[i].count);
+    }
+    const pix = new Uint8Array(4);
+    gl.readPixels(px, py, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, pix);
+    gl.uniform1f(uPickMode, 0);
+    redraw();
+    const idx = pix[0] + pix[1] * 256 - 1;
+    return (idx >= 0 && idx < ranges.length) ? idx : -1;
+  }
+
   // управление
-  let drag = null, pinch = null;
+  let drag = null, pinch = null, moved = 0;
   canvas.style.touchAction = 'none';
   canvas.addEventListener('pointerdown', e => {
     canvas.setPointerCapture(e.pointerId);
     if (drag && !pinch) pinch = { id2: e.pointerId, x: e.clientX, y: e.clientY };
-    else drag = { id: e.pointerId, x: e.clientX, y: e.clientY };
-    e.preventDefault();
+    else { drag = { id: e.pointerId, x: e.clientX, y: e.clientY }; moved = 0; }
+    // preventDefault здесь нельзя: он подавляет синтез события click,
+    // на котором работает определение детали; прокрутку держит touch-action
   });
   canvas.addEventListener('pointermove', e => {
     if (pinch && (e.pointerId === pinch.id2 || (drag && e.pointerId === drag.id))) {
@@ -147,6 +179,7 @@ function viewer3d(canvas) {
       return;
     }
     if (drag && e.pointerId === drag.id) {
+      moved += Math.hypot(e.clientX - drag.x, e.clientY - drag.y);
       yaw += (e.clientX - drag.x) * 0.008;
       pitch = Math.min(1.5, Math.max(-1.5, pitch + (e.clientY - drag.y) * 0.008));
       drag.x = e.clientX; drag.y = e.clientY;
@@ -155,8 +188,18 @@ function viewer3d(canvas) {
   });
   const up = e => {
     if (pinch && e.pointerId === pinch.id2) pinch = null;
-    else if (drag && e.pointerId === drag.id) { drag = null; if (pinch) { drag = { id: pinch.id2, x: pinch.x, y: pinch.y }; pinch = null; } }
+    else if (drag && e.pointerId === drag.id) {
+      drag = null;
+      if (pinch) { drag = { id: pinch.id2, x: pinch.x, y: pinch.y }; pinch = null; }
+    }
   };
+  // короткий клик без перетаскивания — определить деталь
+  canvas.addEventListener('click', e => {
+    if (moved < 6 && pickCb) {
+      const idx = pickAt(e.clientX, e.clientY);
+      pickCb(idx >= 0 ? ranges[idx].name : null);
+    }
+  });
   canvas.addEventListener('pointerup', up);
   canvas.addEventListener('pointercancel', up);
   canvas.addEventListener('wheel', e => {
@@ -167,5 +210,5 @@ function viewer3d(canvas) {
   canvas.addEventListener('dblclick', () => { yaw = 2.7; pitch = -0.7; zoom = 1.5; redraw(); });
   window.addEventListener('resize', redraw);
   const setView = (y, p, z) => { yaw = y; pitch = p; if (z) zoom = z; redraw(); };
-  return { setParts, redraw, setView };
+  return { setParts, redraw, setView, pick: pickAt, onPick: cb => { pickCb = cb; } };
 }

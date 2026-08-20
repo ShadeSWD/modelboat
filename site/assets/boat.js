@@ -107,21 +107,30 @@ function compute() {
   /* --- первый проход равновесия (грубо, для линии вала и пера) --- */
   const massRough = mShell + mFrames + sp.Adeck * wall * rhoP + mLacq + 0.35;
   const eq0 = equilibrium(hull, massRough, 0.47 * L, 0.4 * D);
-  const xProp = 0.03 * L;
-  const zProp = eq0.floats ? Math.max(wall + 0.004, eq0.T - dr.D / 2 - 0.004) : 0.01;
-  const zMotorGuess = 0.02;
+  /* винт — ЗА транцем (модельная схема: вал выходит через днище у транца,
+   * пересечений винта с корпусом нет по построению); мотор стоит на
+   * наклонном фундаменте так, что его ось лежит НА линии вала —
+   * стыковка с валом напрямую через муфту, без излома */
+  const Rp = dr.D / 2;
+  const xProp = -(Rp + 0.004);
+  const zProp = eq0.floats ? Math.max(Rp * 0.25 + 0.004, eq0.T - Rp - 0.003) : 0.012;
+  const AXISH = { classic: 24.4, micro: 7.0 };   // высота оси над площадкой фундамента, мм
+  const bottomAtMotorM = hullBotAt(hull, anchors.motorX / 1000) + wall;
+  const zMot = Math.max(bottomAtMotorM + 0.006 + AXISH[kit] / 1000, zProp + 0.006);
+  const shaftTiltDeg = Math.atan2(zMot - zProp, anchors.motorX / 1000 - xProp) * 180 / Math.PI;
   const shaftLine = [];
   for (let i = 0; i < (twin ? 2 : 1); i++) {
     shaftLine.push({
       x1: xProp, z1: zProp,
-      x2: anchors.motorX / 1000, z2: zMotorGuess,
+      x2: anchors.motorX / 1000, z2: zMot,
       y: twin ? (i === 0 ? 1 : -1) * anchors.twinY / 1000 : 0,
     });
   }
+  // перо руля навешено на транец за винтом
   const rudder = PROTOS[state.proto].rudder ? {
-    x: 0.012 * LM, chord: Math.round(0.062 * LM),
-    span: Math.round((eq0.floats ? eq0.T : D / 2) * 0.85 * 1000), thick: 3,
-    zTop: hull.stations[1].pts[0].z * 1000 + 2,
+    x: (xProp - Rp * 1.15) * 1000 - 4, chord: Math.round(0.062 * LM),
+    span: Math.round((eq0.floats ? eq0.T : D / 2) * 0.8 * 1000), thick: 3,
+    zTop: (zProp + Rp) * 1000 + 5,
   } : null;
 
   /* --- палуба: кромка борта и люк над отсеком аппаратуры --- */
@@ -141,6 +150,7 @@ function compute() {
       kit, parts: P, hullStations: hull.stations, L, B, D, wall,
       ballast: state.ballast, ballastFx: state.ballastFx,
       anchors, sledSlots, sledW,
+      shaftTiltDeg, motorZtop: (zMot - AXISH[kit] / 1000) * 1000,
       rudder, prop: { D: dr.D * 1000, P: dr.pitch * 1000 },
       shaftMM: shaftLine.map(s => ({
         x1: s.x1 * 1000, z1: s.z1 * 1000, x2: s.x2 * 1000, z2: s.z2 * 1000, y: s.y * 1000,
@@ -161,14 +171,24 @@ function compute() {
       Lmm: p.L, Wmm: p.W, Hmm: p.H, shape: p.shape || 'box',
     });
   };
+  // направление линии вала (от винта к мотору) и точка на ней
+  const shDir = (() => {
+    const dx = anchors.motorX / 1000 - xProp, dz = zMot - zProp;
+    const l = Math.hypot(dx, dz);
+    return { x: dx / l, z: dz / l };
+  })();
+  const onShaft = distFromMotor => ({
+    x: anchors.motorX / 1000 - shDir.x * distFromMotor,
+    z: zMot - shDir.z * distFromMotor,
+  });
   if (kit === 'classic') {
-    const fm = fitById('fit_motor'), fs = fitById('fit_servo'), fb = fitById('fit_batt');
-    if (fm) { // мотор лежит в V-ложементе осью на axisZ
+    const fs = fitById('fit_servo'), fb = fitById('fit_batt');
+    { // мотор осью на линии вала, наклонён вместе с фундаментом
       const p = P.motor_130;
       comps.push({
         id: 'motor_130', name: p.name, x: anchors.motorX / 1000, y: 0,
-        z: (fm.place.z + fm.axisZ) / 1000, mass: p.mass / 1000,
-        Lmm: p.L, Wmm: p.W, Hmm: p.H, shape: 'cyl',
+        z: zMot, mass: p.mass / 1000,
+        Lmm: p.L, Wmm: p.W, Hmm: p.H, shape: 'cyl', rotY: -shaftTiltDeg,
       });
     }
     if (fs) addComp('servo_sg90', anchors.servoX, 0, fs.place.z + (fs.seat || 2));
@@ -181,11 +201,20 @@ function compute() {
       bi.z = (fb.place.z + (fb.seat || 2) + bi.Hmm / 2) / 1000;
       bi.id = 'holder';
     }
-    addComp('coupling', anchors.motorX - motorL / 2 - 10, 0, zProp * 1000 + 6);
-    addComp('rudder_gear', rudder ? rudder.x + 6 : 8, 0,
-      hull.stations[1].pts[0].z * 1000 + wall * 1000 + 2);
-    addComp('shaft_m2', (xProp * 1000 + anchors.motorX) / 2, 0, zProp * 1000);
-    addComp('prop_35', xProp * 1000 - 6, 0, zProp * 1000 - P.prop_35.W / 2 + P.prop_35.H / 2 - P.prop_35.H / 2);
+    { // муфта — на линии вала, вплотную к мотору
+      const c = onShaft((motorL / 2 + 8) / 1000);
+      addComp('coupling', c.x * 1000, 0, 0);
+      const cc = comps[comps.length - 1];
+      cc.z = c.z; cc.shape = 'cyl'; cc.rotY = -shaftTiltDeg;
+      cc.name = 'Муфта вала (стыкует мотор и вал напрямую)';
+    }
+    // качалка руля — у транца под палубой (тяга идёт к серво)
+    addComp('rudder_gear', 12, 0, D * 1000 - P.rudder_gear.H - 6);
+    // вал в массе есть, но в 3D его заменяет дейдвудная трубка по линии
+    addComp('shaft_m2', onShaft(0.05).x * 1000, 0, onShaft(0.05).z * 1000);
+    comps[comps.length - 1].draw = false;
+    addComp('prop_35', xProp * 1000, 0, zProp * 1000 - P.prop_35.H / 2);
+    comps[comps.length - 1].draw = false; // в 3D — лопастной винт
   } else {
     const fl = fitById('fit_motor_l'), fb = fitById('fit_batt');
     for (const sgn of [1, -1]) {
@@ -193,8 +222,8 @@ function compute() {
       const p = P.motor_n20;
       comps.push({
         id: 'motor_n20', name: p.name, x: anchors.motorX / 1000, y: sgn * anchors.twinY / 1000,
-        z: ((f ? f.place.z + (f.seat || 2) : 10) + p.H / 2) / 1000, mass: p.mass / 1000,
-        Lmm: p.L, Wmm: p.W, Hmm: p.H, shape: 'box', twin: true,
+        z: zMot, mass: p.mass / 1000,
+        Lmm: p.L, Wmm: p.W, Hmm: p.H, shape: 'box', twin: true, rotY: -shaftTiltDeg,
       });
     }
     if (fb) {
@@ -207,14 +236,17 @@ function compute() {
       bi.id = 'holder';
     }
     for (const s of shaftLine) {
-      addComp('shaft_m2', (s.x1 + s.x2) / 2 * 1000, s.y * 1000, s.z1 * 1000);
+      addComp('shaft_m2', onShaft(0.05).x * 1000, s.y * 1000, onShaft(0.05).z * 1000);
       comps[comps.length - 1].y = s.y;
-      addComp('prop_30', s.x1 * 1000 - 5, s.y * 1000, s.z1 * 1000);
+      comps[comps.length - 1].draw = false;
+      addComp('prop_30', s.x1 * 1000, s.y * 1000, s.z1 * 1000);
       comps[comps.length - 1].y = s.y;
-    }
-    for (const s of shaftLine) {
-      addComp('coupling', anchors.motorX - motorL / 2 - 8, s.y * 1000, s.z1 * 1000 + 4);
-      comps[comps.length - 1].y = s.y;
+      comps[comps.length - 1].draw = false;
+      const c = onShaft((motorL / 2 + 6) / 1000);
+      addComp('coupling', c.x * 1000, s.y * 1000, 0);
+      const cc = comps[comps.length - 1];
+      cc.y = s.y; cc.z = c.z; cc.shape = 'cyl'; cc.rotY = -shaftTiltDeg;
+      cc.name = 'Муфта вала (стыкует мотор и вал напрямую)';
     }
   }
   // платы в карманах салазок
@@ -227,8 +259,11 @@ function compute() {
   // выключатель и «рассыпуха»
   addComp('switch_kcd', anchors.switchX, 0,
     fitById('fit_deck') ? D * 1000 - P.switch_kcd.H - 4 : D * 1000 * 0.5);
+  // провода и крепёж — россыпь по трюму: в массе есть, в 3D не рисуются
   addComp('wires', anchors.wiresX, 0, hullBotAt(hull, anchors.wiresX / 1000) * 1000 + wall * 1000 + 1);
+  comps[comps.length - 1].draw = false;
   addComp('screws_m3', anchors.wiresX + 40, 0, hullBotAt(hull, anchors.wiresX / 1000 + 0.04) * 1000 + wall * 1000 + 1);
+  comps[comps.length - 1].draw = false;
 
   const mComps = comps.reduce((s, c) => s + c.mass, 0);
   const mBall = state.ballast / 1000;
@@ -634,15 +669,14 @@ function assemblyParts(r, opts) {
     return [0.45, 0.45, 0.48];
   };
   for (const c of r.comps) {
-    if (c.id === 'prop_30' || c.id === 'prop_35') continue; // винты — лопастями ниже
+    if (c.draw === false) continue; // винты и вал в 3D рисуются честнее ниже
     const cx = c.x * 1000, cy = c.y * 1000, cz = c.z * 1000;
-    let tris;
-    if (c.shape === 'cyl') {
-      tris = fMove(fRotY(fRing(0, 0, -c.Lmm / 2, c.Wmm / 2, 0, c.Lmm, 20), 90), cx, cy, cz);
-    } else {
-      tris = fBox(cx, cy, cz, c.Lmm, c.Wmm, c.Hmm);
-    }
-    parts.push({ name: c.name, color: colorOf(c), tris });
+    // деталь строится в нуле, поворачивается (наклон по линии вала) и ставится
+    let tris = c.shape === 'cyl'
+      ? fRotY(fRing(0, 0, -c.Lmm / 2, c.Wmm / 2, 0, c.Lmm, 20), 90)
+      : fBox(0, 0, 0, c.Lmm, c.Wmm, c.Hmm);
+    if (c.rotY) tris = fRotY(tris, c.rotY);
+    parts.push({ name: c.name, color: colorOf(c), tris: fMove(tris, cx, cy, cz) });
   }
   for (const f of r.fitsAboard) {
     if (f.id === 'fit_deck' || f.id === 'fit_hatch') {
@@ -658,26 +692,34 @@ function assemblyParts(r, opts) {
       tris: fMove(f.tris, f.place.x, f.place.y || 0, f.place.z),
     });
   }
-  // дейдвудные трубки и лопастные винты
+  // дейдвудные трубки (по линии вала) и лопастные винты за транцем
   const dr = DRIVE[r.kit];
   for (const s of r.shaftLine) {
     const dx = (s.x2 - s.x1) * 1000, dz = (s.z2 - s.z1) * 1000;
     const len = Math.hypot(dx, dz);
     const ang = Math.atan2(dx, dz) * 180 / Math.PI;
     parts.push({
-      name: 'Дейдвуд с валом', color: [0.5, 0.45, 0.25],
-      tris: fMove(fRotY(fRing(0, 0, 0, 2.5, 0, len, 14), ang), s.x1 * 1000, s.y * 1000, s.z1 * 1000),
+      name: 'Дейдвудная трубка Ø5 с валом Ø2 (сквозь днище у транца)', color: [0.5, 0.45, 0.25],
+      tris: fMove(fRotY(fRing(0, 0, 6, 2.5, 0, len - 6, 14), ang), s.x1 * 1000, s.y * 1000, s.z1 * 1000),
     });
     parts.push({
-      name: 'Гребной винт', color: [0.75, 0.6, 0.2],
+      name: `Гребной винт Ø${dr.D * 1000} мм, шаг ${dr.pitch * 1000} мм (за транцем)`, color: [0.75, 0.6, 0.2],
       tris: fMove(propMesh(dr.D * 1000, dr.pitch * 1000, 3, 0.25 * dr.D * 1000, 7),
-        s.x1 * 1000 - 5, s.y * 1000, s.z1 * 1000),
+        s.x1 * 1000, s.y * 1000, s.z1 * 1000),
     });
   }
-  parts.push({
-    name: 'Балласт', color: [0.25, 0.25, 0.28],
-    tris: fBox(r.xBall * 1000, 0, r.zBall * 1000, Math.max(20, r.mBall * 1e6 / 6 / 300), 16, 8),
-  });
+  // балласт — засыпка внутри своего кармана
+  const fBal = r.fits.find(f => f.id === 'fit_ballast');
+  if (fBal && r.mBall > 0.001) {
+    const iw = (fBal.ballW || 20) - 2, il = (fBal.ballL || 60) - 8;
+    const fillH = Math.min((fBal.ballH || 10) - 1.5,
+      Math.max(3, r.mBall * 1e6 / 6 / (iw * il)));
+    parts.push({
+      name: `Балласт: свинцовая дробь или гайки М8, ${(r.mBall * 1000).toFixed(0)} г (в кармане, залит эпоксидкой)`,
+      color: [0.25, 0.25, 0.28],
+      tris: fBox(fBal.place.x, 0, fBal.place.z + 2 + fillH / 2, il, iw, fillH),
+    });
+  }
   return parts;
 }
 
@@ -691,7 +733,17 @@ function schedule3d() {
 function update3d() {
   const cv = $('view3d');
   if (!cv || typeof viewer3d !== 'function') return;
-  if (!viewer) { viewer = viewer3d(cv); window._v3d = viewer; }
+  if (!viewer) {
+    viewer = viewer3d(cv);
+    window._v3d = viewer;
+    if (viewer && viewer.onPick && $('pickinfo')) {
+      viewer.onPick(name => {
+        $('pickinfo').innerHTML = name
+          ? '<b>Деталь:</b> ' + name
+          : 'Кликните по детали, чтобы узнать, что это (перетаскивание — поворот).';
+      });
+    }
+  }
   if (!viewer) return;
   const r = cur || compute();
   viewer.setParts(assemblyParts(r, { cut: $('cut3d') && $('cut3d').checked }));

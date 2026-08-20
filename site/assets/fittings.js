@@ -399,9 +399,10 @@ function buildFittings(ctx) {
   const keelZ = xMM => stAt(xMM).pts[0].z * 1000 + wallMM;
 
   /* донное крепление: узел на подошве; place.z = 0 у подошвы (детали
-   * строятся от нуля своей площадки, подошва уходит вниз до обводов) */
-  const grounded = (id, name, nodeTris, xMM, yMM, halfW, len, note, extra) => {
-    const zTop = platformZ(xMM, halfW + Math.abs(yMM));
+   * строятся от нуля своей площадки, подошва уходит вниз до обводов);
+   * zTopOverride задаёт высоту площадки принудительно (мотор на линии вала) */
+  const grounded = (id, name, nodeTris, xMM, yMM, halfW, len, note, extra, zTopOverride) => {
+    const zTop = Math.max(zTopOverride || 0, platformZ(xMM, halfW + Math.abs(yMM)));
     const sole = soleFor(xMM, Math.abs(yMM) + halfW, len, zTop);
     // подошва строится в координатах корпуса по y — сместим в локальные
     const tris = nodeTris.concat(fMove(sole, 0, -yMM, -zTop));
@@ -412,13 +413,17 @@ function buildFittings(ctx) {
   if (kit === 'classic') {
     const d = (parts.motor_130 && parts.motor_130.W) || 21;
     const cr = vCradle(d, 22, 2);
-    let T = cr.tris.concat(zipBridge(0, 0, d + 12, cr.h + 2),
+    // ложемент наклонён на угол линии вала: мотор стыкуется с валом напрямую
+    const tilt = ctx.shaftTiltDeg || 0;
+    let T = cr.tris.concat(zipBridge(0, 0, d + 12, cr.h + 2));
+    T = fRotY(T, tilt).map(t => t.map(p => [p[0], p[1], Math.max(p[2], -1)]));
+    T = T.concat(
       lug(-(d + 10) / 2, 0, -(d + 10) / 2 - 5, 0, 3),
       lug((d + 10) / 2, 0, (d + 10) / 2 + 5, 0, 3));
-    grounded('fit_motor', 'Фундамент мотора 130 (V-ложемент, стяжка, 2 ушка)',
-      T, ctx.anchors.motorX, 0, (d + 10) / 2 + 9, 24,
-      'подошва по обводам клеится к днищу, страховка — самонарезы через ушки; мотор — стяжкой',
-      { axisZ: cr.axisZ });
+    grounded('fit_motor', `Фундамент мотора 130 (наклон ${tilt.toFixed(0)}° по линии вала, стяжка, 2 ушка)`,
+      T, ctx.anchors.motorX, 0, (d + 10) / 2 + 9, 26,
+      'площадка наклонена по линии вала — ось мотора смотрит точно в дейдвуд, муфта работает без излома',
+      { axisZ: cr.axisZ }, ctx.motorZtop);
     // кронштейн серво
     T = trayPocket(32, 16, 12, []).concat(
       fRing(-13.9, 0, 0.5, 3, 1.0, 13.5, 18), fRing(13.9, 0, 0.5, 3, 1.0, 13.5, 18));
@@ -439,14 +444,16 @@ function buildFittings(ctx) {
     const nw = (parts.motor_n20 && parts.motor_n20.W) || 12;
     const nh = (parts.motor_n20 && parts.motor_n20.H) || 10;
     const yTw = ctx.anchors.twinY;
+    const tilt = ctx.shaftTiltDeg || 0;
     let T = trayPocket(28, nw + 5, nh, []).concat(zipBridge(0, 0, nw + 13, nh + 2));
-    grounded('fit_motor_l', 'Карман мотора N20, левый борт', T,
-      ctx.anchors.motorX, yTw, (nw + 5) / 2 + 2, 30,
-      'редуктор в карман с натягом + стяжка', { seat: 2 });
-    grounded('fit_motor_r', 'Карман мотора N20, правый борт',
+    T = fRotY(T, tilt).map(t => t.map(p => [p[0], p[1], Math.max(p[2], -1)]));
+    grounded('fit_motor_l', `Карман мотора N20, левый борт (наклон ${tilt.toFixed(0)}°)`, T,
+      ctx.anchors.motorX, yTw, (nw + 5) / 2 + 2, 32,
+      'карман наклонён по линии вала: редуктор смотрит точно в дейдвуд', { seat: 2 }, ctx.motorZtop);
+    grounded('fit_motor_r', `Карман мотора N20, правый борт (наклон ${tilt.toFixed(0)}°)`,
       T.map(t => t.map(p => p.slice())),
-      ctx.anchors.motorX, -yTw, (nw + 5) / 2 + 2, 30,
-      'зеркально на правом борту', { seat: 2 });
+      ctx.anchors.motorX, -yTw, (nw + 5) / 2 + 2, 32,
+      'зеркально на правом борту', { seat: 2 }, ctx.motorZtop);
     const bw = (parts.holder_1x18650 && parts.holder_1x18650.W) || 21;
     const bl = (parts.holder_1x18650 && parts.holder_1x18650.L) || 78;
     T = trayPocket(bl + 6, bw + 6, 8, []).concat(
@@ -507,7 +514,7 @@ function buildFittings(ctx) {
     lug(-ballL / 2, 0, -ballL / 2 - 5, 0, 3), lug(ballL / 2, 0, ballL / 2 + 5, 0, 3));
   grounded('fit_ballast', `Карман балласта (${ctx.ballast || 0} г дроби или гаек М8)`,
     T, ctx.anchors.ballastX, 0, (ballW + 4) / 2 + 2, ballL + 8,
-    'клеится на киль до герметизации; засыпка проливается эпоксидкой', { ballH });
+    'клеится на киль до герметизации; засыпка проливается эпоксидкой', { ballH, ballL, ballW });
   T = fBox(0, 0, 0.8, ballL + 5, ballW + 9, 1.6)
     .concat(fBox(-ballL / 2 + 4, 0, 2.6, 4, ballW - 2, 2), fBox(ballL / 2 - 4, 0, 2.6, 4, ballW - 2, 2));
   const bz = out.find(f => f.id === 'fit_ballast');
