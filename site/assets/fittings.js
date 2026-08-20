@@ -459,7 +459,9 @@ function buildFittings(ctx) {
     grounded('fit_motor', `Фундамент мотора 130 (наклон ${tilt.toFixed(0)}° по линии вала, стяжка, 2 ушка)`,
       T, ctx.anchors.motorX, 0, (d + 10) / 2 + 9, 26,
       'площадка наклонена по линии вала — ось мотора смотрит точно в дейдвуд, муфта работает без излома',
-      { axisZ: cr.axisZ }, ctx.motorZtop);
+      { axisZ: cr.axisZ, screws: [
+        { x: ctx.anchors.motorX - (d + 10) / 2 - 5, y: 0 },
+        { x: ctx.anchors.motorX + (d + 10) / 2 + 5, y: 0 }] }, ctx.motorZtop);
     // кронштейн серво
     T = trayPocket(32, 16, 12, []).concat(
       fRing(-13.9, 0, 0.5, 3, 1.0, 13.5, 18), fRing(13.9, 0, 0.5, 3, 1.0, 13.5, 18));
@@ -630,7 +632,9 @@ function buildFittings(ctx) {
     lug(-ballL / 2, 0, -ballL / 2 - 5, 0, 3), lug(ballL / 2, 0, ballL / 2 + 5, 0, 3));
   grounded('fit_ballast', `Карман балласта (${ctx.ballast || 0} г дроби или гаек М8)`,
     T, ctx.anchors.ballastX, 0, (ballW + 4) / 2 + 2, ballL + 24,
-    'клеится на киль до герметизации; засыпка проливается эпоксидкой', { ballH, ballL, ballW });
+    'клеится на киль до герметизации; засыпка проливается эпоксидкой', { ballH, ballL, ballW, screws: [
+      { x: ctx.anchors.ballastX - ballL / 2 - 5, y: 0 },
+      { x: ctx.anchors.ballastX + ballL / 2 + 5, y: 0 }] });
   T = fBox(0, 0, 0.8, ballL + 5, ballW + 9, 1.6)
     .concat(fBox(-ballL / 2 + 4, 0, 2.6, 4, ballW - 2, 2), fBox(ballL / 2 - 4, 0, 2.6, 4, ballW - 2, 2));
   const bz = out.find(f => f.id === 'fit_ballast');

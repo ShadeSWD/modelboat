@@ -61,7 +61,7 @@ function kitOf() { return PROTOS[state.proto].shafts === 2 ? 'micro' : 'classic'
 /* ---------- полный пересчёт ---------- */
 function compute() {
   const L = state.L / 1000, B = L / state.LB, D = B * state.DB;
-  const hull = makeHull(state.proto, { L, B, D },
+  let hull = makeHull(state.proto, { L, B, D },
     { full: state.full, transom: state.transom, bow: state.bow });
   const wall = state.wall / 1000;
   const rhoP = state.mat === 'petg' ? 1270 : 1240;
@@ -111,18 +111,64 @@ function compute() {
   const chordM = 0.062 * L;
   const yPropM = twin ? twinYm : 0;
   const dipLim = (twin ? 0.5 : 0.15) * T0;
-  let xPropV = (twin ? 0.05 : 0.075) * L, Rp = dr.D / 2;
-  for (let it = 0; it < 3; it++) { // диаметр и позиция сходятся за пару итераций
-    const bl = bottomLocal(xPropV, yPropM);
-    Rp = Math.max(0.008, Math.min(dr.D / 2, (bl - 0.0015 + dipLim) / 2));
-    if (!twin) { // перед пером руля должно остаться место до транца
-      const need = 0.008 + 0.35 * chordM + 0.002 + Rp;
-      if (xPropV < need) xPropV = need;
+  // низ ОСНОВНОГО ТЕЛА корпуса (узкий дейдвуд-плавник < 4 мм не в счёт:
+  // в зоне диска он вырезается апертурой, как у прототипа)
+  const bottomBody = (xM, yM) => {
+    const st = hull.stations[Math.max(0, Math.min(hull.stations.length - 1,
+      Math.round(xM / L * (hull.stations.length - 1))))];
+    const yNeed = Math.max(Math.abs(yM), 0.008);
+    for (let k = 0; k < st.pts.length; k++)
+      if (st.pts[k].y >= yNeed) return st.pts[k].z;
+    return st.pts[st.pts.length - 1].z;
+  };
+  // обшивка над диском: минимум по толщине диска (±7 мм по x)
+  const botFn = twin ? bottomLocal : bottomBody;
+  const minBotX = (xM, yM) => Math.min(
+    botFn(xM - 0.007, yM), botFn(xM, yM), botFn(xM + 0.007, yM));
+  /* диск винта проверяется ЦЕЛИКОМ: каждая точка окружности обязана быть
+   * на 1,5 мм ниже местной обшивки на СВОЕЙ полуширине (обшивка к ДП
+   * опускается — раньше лопасти скребли по подзору сбоку от оси) */
+  const sweepZ = (xM, R) => { // самое низкое положение оси по всем точкам диска
+    let z = 1e9;
+    for (let th = 0; th <= 90; th += 10) {
+      const c = Math.cos(th * Math.PI / 180), sn = Math.sin(th * Math.PI / 180);
+      for (const sgn of (th ? [1, -1] : [1]))
+        z = Math.min(z, minBotX(xM, yPropM + sgn * R * sn) - 0.0015 - R * c);
     }
+    return z;
+  };
+  const fitR = xM => { // наибольший радиус, вписывающийся в апертуру при x
+    let R = dr.D / 2;
+    for (let it = 0; it < 20; it++) {
+      const short = (-dipLim) - (sweepZ(xM, R) - R);
+      if (short <= 0.0001 || R <= 0.0081) break;
+      R = Math.max(0.008, R - short * 0.6);
+    }
+    return R;
+  };
+  /* положение винта СКАНИРУЕТСЯ по длине кормы: у судов с дейдвудным
+   * плавником (Серия 60) место винту — в апертуре за плавником, а не под
+   * ним; выбирается x с наибольшим вписанным диаметром (одновальному ещё
+   * нужно место для пера руля между винтом и транцем) */
+  let xPropV = (twin ? 0.05 : 0.075) * L, Rp = 0.008;
+  for (let xC = 0.012 * L; xC <= 0.16 * L; xC += 0.002) {
+    const Rc = fitR(xC);
+    if (!twin && xC < 0.002 + 0.35 * chordM + 0.002 + Rc) continue; // руль не влезет
+    if (Rc > Rp + 1e-6) { Rp = Rc; xPropV = xC; }
   }
   const xProp = xPropV;
-  const zProp = bottomLocal(xProp, yPropM) - 0.0015 - Rp;
+  let zProp = sweepZ(xProp, Rp);
   const DpEff = 2 * Rp; // фактический диаметр винта, вписанный под корпус
+  // апертура: вырез плавника в зоне диска (только одновальные)
+  const aperture = twin ? null : { x1: xProp - Rp - 0.004, x2: xProp + Rp + 0.004 };
+  let zPropF = zProp;
+  if (aperture) {
+    hull = makeHull(state.proto, { L, B, D },
+      { full: state.full, transom: state.transom, bow: state.bow }, null, aperture);
+    // страховочный проход по фактически вырезанному корпусу: интерполяция
+    // выреза может отличаться от прогноза на доли мм — ось опускается
+    zPropF = Math.min(zProp, sweepZ(xProp, Rp));
+  }
   const pitchEff = dr.pitch * DpEff / dr.D; // шаг покупного винта ~пропорционален
 
   /* --- мотор: ось на линии вала, наклон не больше 15° (прямая муфта);
@@ -190,6 +236,7 @@ function compute() {
   const sledScan = avoidMotor => {
     for (let f = Math.min(0.86, sledMaxF, ch.sF); f > 0.24; f -= 0.02) {
       if (avoidMotor && Math.abs(f * LM - motorFm * LM) < (motorL + sledLen) / 2 + 6) continue;
+      if (avoidMotor && Math.abs(f * LM - battDefF * LM) < (battL + sledLen) / 2 + 6) continue;
       let ok = true;
       for (const xo of [-sledLen / 2 - 4, 0, sledLen / 2 + 4])
         if (yInQuick(f * L + xo / 1000, 0.62 * D) < sledHalfM) { ok = false; break; }
@@ -222,6 +269,7 @@ function compute() {
   for (const k in anchors) if (k !== 'twinY') anchors[k] *= 1000; // в мм
 
   const zMot = zMotAt(anchors.motorX / 1000 / L);
+  zProp = zPropF;
   const shaftTiltDeg = Math.atan2(zMot - zProp, anchors.motorX / 1000 - xProp) * 180 / Math.PI;
   const shaftLine = [];
   for (let i = 0; i < (twin ? 2 : 1); i++) {
@@ -233,7 +281,7 @@ function compute() {
   }
   // перо руля под подзором за винтом, верх у обшивки
   const rudder = PROTOS[state.proto].rudder ? (() => {
-    const xR = xProp - Rp - 0.35 * chordM - 0.002;
+    const xR = Math.max(0.002 + 0.35 * chordM, xProp - Rp - 0.35 * chordM - 0.002);
     const zTop = (bottomLocal(xR, 0) - 0.001) * 1000;
     return {
       x: xR * 1000, chord: Math.round(chordM * 1000),
@@ -326,7 +374,7 @@ function compute() {
     // гельмпорт; внутри торчит только головка с качалкой — её и рисуем);
     // в узкой корме сдвигается в нос, пока не поместится по ширине
     let rgX = 22;
-    while (rgX < 80 && yInQuick(rgX / 1000, D - 0.020) < 0.013) rgX += 4;
+    while (rgX < 130 && yInQuick(rgX / 1000, D - 0.020) < 0.014) rgX += 4;
     addComp('rudder_gear', rgX, 0, D * 1000 - 20);
     {
       const rg = comps[comps.length - 1];
@@ -399,6 +447,14 @@ function compute() {
     tooShort = !!(shf && shf.shelfTight);
   }
   const fitsAboard = fits.filter(f => f.place);
+  // усиления корпуса под самонарезы: бобышка Ø10 на внутренней поверхности
+  const screwPads = [];
+  for (const f of fitsAboard) for (const sc of (f.screws || [])) {
+    let zin = D * 1000 * 0.5;
+    for (let zz = 0.5; zz < D * 1000; zz += 0.5)
+      if (yInQuick(sc.x / 1000, zz / 1000) * 1000 >= Math.abs(sc.y) + 0.3) { zin = zz; break; }
+    screwPads.push({ x: sc.x, y: sc.y, z: zin });
+  }
   const mFits = fitsAboard.reduce((s, f) => s + f.mass, 0) / 1000;
   const hasDeck = !!fitById('fit_deck');
   const mDeck = hasDeck ? 0 : sp.Adeck * wall * rhoP; // палуба теперь печатная деталь
@@ -431,7 +487,7 @@ function compute() {
     mShell, mFrames, mDeck, mLacq, mComps, mBall, mFits,
     xBall: anchors.ballastX / 1000, zBall,
     fits, fitsAboard, shaftLine, rudder, xProp, zProp, DpEff, pitchEff, rhoP, kPrint,
-    anchors, sledLen, hatch, hasDeck, tooShort, shaftTiltDeg, shelfMode,
+    anchors, sledLen, hatch, hasDeck, tooShort, shaftTiltDeg, shelfMode, screwPads, aperture,
     morph: { full: state.full, transom: state.transom, bow: state.bow },
     Vfull: hullVolume(hull),
   };
@@ -801,7 +857,15 @@ function attachDrag(side) {
  * дейдвуд (сквозь днище), винт и перо руля (за транцем), палуба с
  * крышкой (на планшире). Возвращает нарушителей с глубиной, мм. */
 const CLEAR_TOL = 1.2;
-const CLEAR_ALLOW = /Корпус|Дейдвуд|Гребной винт|Перо руля|Палуба|Крышка люка|Балласт:/;
+const CLEAR_ALLOW = /Корпус|Дейдвуд|Перо руля|Палуба|Крышка люка|Балласт:/;
+
+/* бобышки-усиления Ø10×4,4 мм на внутренней обшивке под каждый самонарез */
+function hullScrewPads(r) {
+  const T = [];
+  for (const sc of (r.screwPads || []))
+    T.push(...fRing(sc.x, sc.y, sc.z - 1.2, 5, 0, 4.4, 18));
+  return T;
+}
 function clearanceViolations(r, parts) {
   const L = r.L * 1000, D = r.D * 1000, wallMM = r.wall * 1000;
   const sts = r.hull.stations;
@@ -810,10 +874,29 @@ function clearanceViolations(r, parts) {
       Math.round(xMM / L * (sts.length - 1))))];
     return yAt(st, zMM / 1000) * 1000 - wallMM;
   };
+  // низ НАРУЖНОЙ обшивки на данной полуширине (для винтов под корпусом)
+  const zBotOut = (xMM, yMM) => {
+    const st = sts[Math.max(0, Math.min(sts.length - 1,
+      Math.round(xMM / L * (sts.length - 1))))];
+    if (Math.abs(yMM) < 0.01) return st.pts[0].z * 1000;
+    for (let k = 0; k < st.pts.length; k++)
+      if (st.pts[k].y * 1000 >= Math.abs(yMM)) return st.pts[k].z * 1000;
+    return st.pts[0].z * 1000;
+  };
   const out = [];
   for (const p of parts) {
     if (CLEAR_ALLOW.test(p.name)) continue;
     let worst = 0, where = '';
+    if (/Гребной винт/.test(p.name)) {
+      // винт живёт СНАРУЖИ: каждая вершина ниже наружной обшивки
+      for (const t of p.tris) for (const v of t) {
+        if (v[0] < -CLEAR_TOL || v[0] > L + CLEAR_TOL) continue;
+        const pen = v[2] - zBotOut(v[0], v[1]) + 1.0;
+        if (pen > worst) { worst = pen; where = 'скребёт по обшивке'; }
+      }
+      if (worst > CLEAR_TOL) out.push({ name: p.name, depth: worst, where });
+      continue;
+    }
     for (const t of p.tris) for (const v of t) {
       if (v[0] < -CLEAR_TOL) { if (worst < 99) { worst = 99; where = 'за транцем'; } continue; }
       if (v[0] > L + CLEAR_TOL) { if (worst < 99) { worst = 99; where = 'за форштевнем'; } continue; }
@@ -838,10 +921,10 @@ function assemblyParts(r, opts) {
   const cut = opts && opts.cut;
   const parts = [];
   if (!(opts && opts.noHull)) {
-    const hullHi = makeHull(state.proto, { L: r.L, B: r.B, D: r.D }, r.morph, { nst: 121, nzc: 57 });
-    let hullTris = hullMesh(hullHi, r.wall);
+    const hullHi = makeHull(state.proto, { L: r.L, B: r.B, D: r.D }, r.morph, { nst: 121, nzc: 57 }, r.aperture);
+    let hullTris = hullMesh(hullHi, r.wall).concat(hullScrewPads(r));
     if (cut) hullTris = hullTris.filter(t => (t[0][1] + t[1][1] + t[2][1]) / 3 < 1.5);
-    parts.push({ name: 'Корпус', color: [0.62, 0.72, 0.78], tris: hullTris });
+    parts.push({ name: 'Корпус (с бобышками-усилениями под самонарезы)', color: [0.62, 0.72, 0.78], tris: hullTris });
   }
   const colorOf = c => {
     if (/^(nano|esp32c3|hm10|hc05|mx1508|tp4056|buck)/.test(c.id)) return [0.19, 0.31, 0.63];
@@ -905,6 +988,11 @@ function assemblyParts(r, opts) {
   return parts;
 }
 
+/* донные крепления, печатаемые монолитом с корпусом (подошвы врезаются
+ * на 0,8 мм в обшивку — слайсер объединяет); съёмное (салазки, полка,
+ * опоры дейдвуда — их выставляют по месту) остаётся отдельной печатью */
+const MONO_IDS = /^fit_(motor|motor_l|motor_r|batt|servo|ballast$|rail_l|rail_r|shelf_leg_l|shelf_leg_r)$/;
+
 /* ---------- 3D-вид ---------- */
 let viewer = null, t3d = null;
 function schedule3d() {
@@ -936,10 +1024,19 @@ function doExport(kind) {
   const r = cur || compute();
   const nm = 'boat-' + state.proto + '-' + state.L;
   if (kind === 'stl') {
-    const hi = makeHull(state.proto, { L: r.L, B: r.B, D: r.D }, r.morph, { nst: 121, nzc: 57 });
-    download(stlBlob(hullMesh(hi, r.wall)), nm + '.stl');
+    const hi = makeHull(state.proto, { L: r.L, B: r.B, D: r.D }, r.morph, { nst: 121, nzc: 57 }, r.aperture);
+    let tris = hullMesh(hi, r.wall).concat(hullScrewPads(r));
+    if ($('mono') && $('mono').checked) // донные фундаменты — монолитом с корпусом
+      for (const f of r.fitsAboard)
+        if (MONO_IDS.test(f.id))
+          tris = tris.concat(fMove(f.tris, f.place.x, f.place.y || 0, f.place.z - 0.8));
+    download(stlBlob(tris), nm + '.stl');
   }
-  if (kind === 'fit') download(stlBlob(fittingsMesh(r.fits)), nm + '-крепления.stl');
+  if (kind === 'fit') {
+    const mono = $('mono') && $('mono').checked;
+    download(stlBlob(fittingsMesh(r.fits.filter(f => !(mono && f.place && MONO_IDS.test(f.id))))),
+      nm + '-крепления.stl');
+  }
   if (kind === 'asm') {
     const all = [];
     for (const p of assemblyParts(r, {})) all.push(...p.tris);
@@ -981,12 +1078,18 @@ if (typeof window !== 'undefined') window.addEventListener('DOMContentLoaded', (
     bind(id, key, true);
   }
   $('proto').value = state.proto;
-  const PROTO_BALLAST = { tug: 350, launch: 150, cargo: 350 };
+  const PROTO_BALLAST = {
+    tug: { m: 350, fx: 0.55 }, launch: { m: 150, fx: 0.48 },
+    cargo: { m: 340, fx: 0.58 }, // апертура винта снимает кормовую плавучесть
+  };
   $('proto').addEventListener('change', () => {
     state.proto = $('proto').value;
     state.pos = {};
-    state.ballast = PROTO_BALLAST[state.proto] || 250;
+    const pb = PROTO_BALLAST[state.proto] || { m: 250, fx: 0.5 };
+    state.ballast = pb.m;
+    state.ballastFx = pb.fx;
     if ($('ballast')) { $('ballast').value = state.ballast; const lb = $('ballast_v'); if (lb) lb.textContent = state.ballast; }
+    if ($('ballastFx')) { $('ballastFx').value = state.ballastFx; const lf = $('ballastFx_v'); if (lf) lf.textContent = state.ballastFx; }
     refresh();
   });
   $('mat').value = state.mat;

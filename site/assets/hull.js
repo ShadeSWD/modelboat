@@ -87,7 +87,7 @@ const PROTOS = {
  * res: {nst, nzc} — разрешение (для экспорта STL сетка строится гуще,
  * чем для гидростатики). hull.stations[i] = {x, pts:[{y,z}… от киля до
  * палубы]} — наружная поверхность правого борта. */
-function makeHull(protoId, dims, morph, res) {
+function makeHull(protoId, dims, morph, res, aperture) {
   const p = PROTOS[protoId];
   const { L, B, D } = dims;
   const m = Object.assign({ full: 1, transom: 1, bow: 1 }, morph);
@@ -179,6 +179,27 @@ function makeHull(protoId, dims, morph, res) {
       pts.push({ y: Math.max(0, y), z: Math.min(z, D) });
     }
     stations.push({ x, pts });
+  }
+  /* апертура гребного винта (одновальные суда): в заданном диапазоне x
+   * узкий кормовой дейдвуд-плавник (полуширина < 8 мм) вырезается —
+   * контур станции начинается от низа основного тела корпуса. Это часть
+   * теоретического чертежа одновинтового судна (окно под винт), объём
+   * и гидростатика считаются уже с вырезом. */
+  if (aperture) {
+    for (const st of stations) {
+      if (st.x < aperture.x1 || st.x > aperture.x2) continue;
+      let zBody = null;
+      for (let z = st.pts[0].z; z <= D; z += D / 200) {
+        if (yAt(st, z) >= 0.008) { zBody = z; break; }
+      }
+      if (zBody === null || zBody <= st.pts[0].z + 0.0005) continue;
+      const old = { pts: st.pts.map(q => ({ y: q.y, z: q.z })) };
+      st.pts = [];
+      for (let k = 0; k < nzc; k++) {
+        const z = zBody + k / (nzc - 1) * (D - zBody);
+        st.pts.push({ y: k === 0 ? 0 : yAt(old, z), z });
+      }
+    }
   }
   return { proto: p, protoId, L, B, D, stations };
 }
